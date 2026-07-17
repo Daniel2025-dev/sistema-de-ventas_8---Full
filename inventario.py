@@ -164,17 +164,25 @@ class Inventario:
 
     def _validate(self) -> bool:
         required = [
-            self.nombre.value,
-            self.codigo.value,
-            self.proveedor.value,
-            self.precio.value,
-            self.costo.value,
-            self.stock.value,
-            self.estado.value,
+            ("Producto", self.nombre.value),
+            ("Codigo interno", self.codigo.value),
+            ("Precio", self.precio.value),
+            ("Costo", self.costo.value),
+            ("Stock", self.stock.value),
+            ("Estado", self.estado.value),
         ]
-        if not all(value and str(value).strip() for value in required):
-            self._notify("Complete todos los campos obligatorios del producto.", error=True)
+        missing = [label for label, value in required if not value or not str(value).strip()]
+        if missing:
+            self._notify(f"Faltan datos obligatorios: {', '.join(missing)}.", error=True)
             return False
+
+        for label, value in [("Precio", self.precio.value), ("Costo", self.costo.value), ("Stock", self.stock.value)]:
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                self._notify(f"El campo {label} debe ser numerico.", error=True)
+                return False
+
         codigo = self._normalize_code(self.codigo.value)
         codigo_barras = self._normalize_code(self.codigo_barras.value) or codigo
         duplicate = fetch_one(
@@ -205,23 +213,23 @@ class Inventario:
         impuesto_id = self.impuestos.get(self.impuesto.value or "")
         codigo = self._normalize_code(self.codigo.value)
         codigo_barras = self._normalize_code(self.codigo_barras.value) or codigo
-        values = (
-            self.nombre.value.strip(),
-            self.proveedor.value,
-            float(self.precio.value),
-            float(self.costo.value),
-            int(float(self.stock.value)),
-            self.categoria.value or "",
-            self.sucursal.value or "",
-            self.estado.value or "Activo",
-            self.image_path.value or "",
-            codigo,
-            codigo_barras,
-            impuesto_id,
-            normalize_expiry_date(self.fecha_vencimiento.value),
-            (self.lote.value or "").strip(),
-        )
         try:
+            values = (
+                self.nombre.value.strip(),
+                self.proveedor.value or "",
+                float(self.precio.value),
+                float(self.costo.value),
+                int(float(self.stock.value)),
+                self.categoria.value or "",
+                self.sucursal.value or "",
+                self.estado.value or "Activo",
+                self.image_path.value or "",
+                codigo,
+                codigo_barras,
+                impuesto_id,
+                normalize_expiry_date(self.fecha_vencimiento.value),
+                (self.lote.value or "").strip(),
+            )
             if self.selected_id is None:
                 execute(
                     """

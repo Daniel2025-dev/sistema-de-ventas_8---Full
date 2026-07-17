@@ -138,7 +138,7 @@ class Ventas:
 
     @staticmethod
     def _normalize_code(value: object) -> str:
-        text = str(value or "").strip()
+        text = "".join(char for char in str(value or "").strip() if char.isprintable())
         if not text:
             return ""
         if text.endswith(".0"):
@@ -147,16 +147,71 @@ class Ventas:
                 return integer_part
         return text
 
+    @classmethod
+    def _code_candidates(cls, value: object) -> list[str]:
+        code = cls._normalize_code(value)
+        if not code:
+            return []
+        candidates = [code]
+        digits = "".join(char for char in code if char.isdigit())
+        if digits and digits not in candidates:
+            candidates.append(digits)
+        if len(digits) > 8:
+            for length in range(min(13, len(digits)) - 1, 7, -1):
+                suffix = digits[-length:]
+                if suffix and suffix not in candidates:
+                    candidates.append(suffix)
+        return candidates
+
     async def _focus_scan_input(self) -> None:
         await self.scan_input.focus()
+
+    async def _focus_quantity_input(self) -> None:
+        await self.entry_cantidad.focus()
 
     def _schedule_scan_focus(self) -> None:
         if hasattr(self.page, "run_task"):
             self.page.run_task(self._focus_scan_input)
 
+    def _schedule_quantity_focus(self) -> None:
+        if hasattr(self.page, "run_task"):
+            self.page.run_task(self._focus_quantity_input)
+
     def load_clients(self) -> None:
         rows = fetch_all("SELECT nombre FROM clientes ORDER BY nombre")
         self.entry_cliente.options = [ft.dropdown.Option(row["nombre"]) for row in rows]
+
+    def _quick_client(self) -> str:
+        if self.entry_cliente.value:
+            return self.entry_cliente.value
+
+        row = fetch_one(
+            """
+            SELECT nombre
+            FROM clientes
+            ORDER BY
+                CASE
+                    WHEN LOWER(nombre) LIKE '%mostrador%' THEN 0
+                    WHEN LOWER(nombre) LIKE '%prueba%' THEN 1
+                    ELSE 2
+                END,
+                nombre
+            LIMIT 1
+            """
+        )
+        if not row:
+            execute(
+                """
+                INSERT INTO clientes (nombre, tipo_id, cedula, celular, direccion, correo)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                ("Cliente Mostrador", "CC", 0, 0, "Venta rapida", "sin_correo@local"),
+            )
+            row = {"nombre": "Cliente Mostrador"}
+            self.load_clients()
+
+        self.entry_cliente.value = row["nombre"]
+        return row["nombre"]
 
     def load_products(self) -> None:
         rows = fetch_all(
@@ -189,6 +244,13 @@ class Ventas:
                     self.product_lookup_by_code[code] = product
         self.entry_nombre.options = options
 
+    def _find_product_by_code(self, code: object) -> dict | None:
+        for candidate in self._code_candidates(code):
+            product = self.product_lookup_by_code.get(candidate)
+            if product:
+                return product
+        return None
+
     def _cart_reserved_quantity(self, producto: str, ignore_index: int | None = None) -> int:
         reserved = 0
         for index, item in enumerate(self.cart):
@@ -219,9 +281,74 @@ class Ventas:
                 return index
         return None
 
+    def _set_cart_item_quantity(self, index: int, cantidad: int) -> bool:
+        if cantidad <= 0:
+            self._notify("La cantidad debe ser mayor a cero.", error=True)
+            return False
+
+        item = self.cart[index]
+        if not item.get("manual"):
+            product = self.product_lookup_by_name.get(item["producto"])
+            if not product:
+                self._notify("El producto ya no existe en inventario.", error=True)
+                return False
+            available_stock = self._available_stock(product, ignore_index=index)
+            if cantidad > available_stock:
+                self._notify(
+                    f"Stock insuficiente. Disponible para venta: {available_stock} unidades.",
+                    error=True,
+                )
+                return False
+
+        current_qty = int(item["cantidad"] or 1)
+        unit_price = float(item["precio"])
+        unit_cost = float(item["costo"]) / max(1, current_qty)
+        rate = (float(item["impuesto"]) / (unit_price * current_qty)) if unit_price * current_qty else 0
+        subtotal = unit_price * cantidad
+        item["cantidad"] = cantidad
+        item["impuesto"] = subtotal * rate
+        item["total"] = subtotal + item["impuesto"]
+        item["costo"] = unit_cost * cantidad
+        return True
+
     def _set_product_selection(self, product: dict | None) -> None:
         self.entry_nombre.value = product["nombre"] if product else None
         self.actualizar_stock(update_page=False)
+
+    def _entry_quantity(self) -> int | None:
+        try:
+            cantidad = int(float(self.entry_cantidad.value or "0"))
+        except ValueError:
+            self._notify("Ingrese una cantidad valida.", error=True)
+            return None
+        if cantidad <= 0:
+            self._notify("La cantidad debe ser mayor a cero.", error=True)
+            return None
+        return cantidad
+
+    def _sync_selected_product_to_cart(self) -> int | None:
+        if not self.entry_nombre.value:
+            return None
+
+        cliente = self._quick_client()
+        cantidad = self._entry_quantity()
+        if cantidad is None:
+            return None
+
+        product = self.product_lookup_by_name.get(self.entry_nombre.value or "")
+        if not product:
+            self._notify("Producto no encontrado.", error=True)
+            return None
+
+        cart_index = self._find_cart_item_index(cliente, product["nombre"])
+        if cart_index is None:
+            if not self._upsert_catalog_item(cliente, product, cantidad):
+                return None
+            return len(self.cart) - 1
+
+        if not self._set_cart_item_quantity(cart_index, cantidad):
+            return None
+        return cart_index
 
     def _upsert_catalog_item(self, cliente: str, product: dict, cantidad: int) -> bool:
         product_name = product["nombre"]
@@ -278,7 +405,6 @@ class Ventas:
 
     def agregar_articulo(self, _: ft.ControlEvent | None = None) -> None:
         cliente = self.entry_cliente.value or ""
-        cantidad_text = self.entry_cantidad.value or "0"
 
         if not cliente:
             self._notify("Seleccione un cliente.", error=True)
@@ -287,14 +413,8 @@ class Ventas:
             self._notify("Seleccione un producto.", error=True)
             return
 
-        try:
-            cantidad = int(float(cantidad_text))
-        except ValueError:
-            self._notify("Ingrese una cantidad valida.", error=True)
-            return
-
-        if cantidad <= 0:
-            self._notify("La cantidad debe ser mayor a cero.", error=True)
+        cantidad = self._entry_quantity()
+        if cantidad is None:
             return
 
         product = self.product_lookup_by_name.get(self.entry_nombre.value or "")
@@ -303,36 +423,22 @@ class Ventas:
             return
         if not self._upsert_catalog_item(cliente, product, cantidad):
             return
-        self.entry_cantidad.value = "1"
+        self.entry_cantidad.value = ""
         self._set_product_selection(None)
         self.scan_status.value = f"Producto agregado: {product['nombre']}"
         self.refresh_cart()
+        self._schedule_scan_focus()
 
     def escanear_codigo(self, _: ft.ControlEvent | None = None) -> None:
-        cliente = self.entry_cliente.value or ""
         barcode = self._normalize_code(self.scan_input.value)
-        cantidad_text = self.entry_cantidad.value or "1"
 
-        if not cliente:
-            self._notify("Seleccione un cliente antes de escanear.", error=True)
-            self._schedule_scan_focus()
-            return
         if not barcode:
             self._notify("Escanee o escriba un codigo valido.", error=True)
             self._schedule_scan_focus()
             return
-        try:
-            cantidad = int(float(cantidad_text))
-        except ValueError:
-            self._notify("La cantidad de escaneo no es valida.", error=True)
-            self._schedule_scan_focus()
-            return
-        if cantidad <= 0:
-            self._notify("La cantidad debe ser mayor a cero.", error=True)
-            self._schedule_scan_focus()
-            return
 
-        product = self.product_lookup_by_code.get(barcode)
+        self.load_products()
+        product = self._find_product_by_code(barcode)
         if not product:
             self.scan_status.value = f"Codigo no encontrado: {barcode}"
             self.scan_input.value = ""
@@ -341,18 +447,13 @@ class Ventas:
             self._schedule_scan_focus()
             return
 
-        if not self._upsert_catalog_item(cliente, product, cantidad):
-            self.scan_input.value = ""
-            self.page.update()
-            self._schedule_scan_focus()
-            return
-
+        self._quick_client()
         self._set_product_selection(product)
-        self.scan_status.value = f"Escaneo OK: {product['nombre']} x{cantidad}"
+        self.scan_status.value = f"Producto encontrado: {product['nombre']}. Digite la cantidad."
         self.scan_input.value = ""
-        self.entry_cantidad.value = "1"
-        self.refresh_cart()
-        self._schedule_scan_focus()
+        self.entry_cantidad.value = ""
+        self.page.update()
+        self._schedule_quantity_focus()
 
     def productos_no_registrados(self, _: ft.ControlEvent | None = None) -> None:
         if not self.entry_cliente.value:
@@ -478,8 +579,7 @@ class Ventas:
             self._notify("Seleccione un item del carrito para editar.", error=True)
             return
         item = self.cart[self.selected_cart_index]
-        current_qty = item["cantidad"]
-        cantidad = ft.TextField(label="Nueva cantidad", value=str(current_qty), border_radius=14)
+        cantidad = ft.TextField(label="Nueva cantidad", value=str(item["cantidad"]), border_radius=14)
 
         def guardar(event: ft.ControlEvent) -> None:
             try:
@@ -488,31 +588,9 @@ class Ventas:
                 close_dialog(self.page, dialog)
                 self._notify("Cantidad invalida.", error=True)
                 return
-            if nueva_cantidad <= 0:
+            if not self._set_cart_item_quantity(self.selected_cart_index, nueva_cantidad):
                 close_dialog(self.page, dialog)
-                self._notify("La cantidad debe ser mayor a cero.", error=True)
                 return
-            if not item.get("manual"):
-                product = self.product_lookup_by_name.get(item["producto"])
-                if not product:
-                    close_dialog(self.page, dialog)
-                    self._notify("El producto ya no existe en inventario.", error=True)
-                    return
-                available_stock = self._available_stock(product, ignore_index=self.selected_cart_index)
-                if nueva_cantidad > available_stock:
-                    close_dialog(self.page, dialog)
-                    self._notify(
-                        f"Stock insuficiente. Disponible para venta: {available_stock} unidades.",
-                        error=True,
-                    )
-                    return
-            unit_price = item["precio"]
-            rate = (item["impuesto"] / (unit_price * current_qty)) if unit_price * current_qty else 0
-            subtotal = unit_price * nueva_cantidad
-            item["cantidad"] = nueva_cantidad
-            item["impuesto"] = subtotal * rate
-            item["total"] = subtotal + item["impuesto"]
-            item["costo"] = (item["costo"] / max(1, current_qty)) * nueva_cantidad
             close_dialog(self.page, dialog)
             self.refresh_cart()
 
@@ -630,6 +708,10 @@ class Ventas:
         self.page.update()
 
     def _mostrar_vuelto(self, factura: int, total_venta: float, monto_pagado: float, cambio: float, metodo_pago: str) -> None:
+        def aceptar(event: ft.ControlEvent) -> None:
+            close_dialog(self.page, dialog)
+            self._schedule_scan_focus()
+
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("Pago registrado"),
@@ -654,31 +736,42 @@ class Ventas:
                 ),
             ),
             actions=[
-                ft.ElevatedButton("Aceptar", on_click=lambda event: close_dialog(self.page, dialog)),
+                ft.ElevatedButton("Aceptar", on_click=aceptar),
             ],
         )
         show_dialog(self.page, dialog)
 
-    def procesar_pago(self, monto: str, metodo_pago: str, descuento: str, dialog: ft.AlertDialog) -> None:
+    def procesar_pago(
+        self,
+        monto: str,
+        metodo_pago: str,
+        descuento: str,
+        dialog: ft.AlertDialog | None,
+        mostrar_vuelto: bool = True,
+    ) -> None:
         if not self.caja_abierta:
-            close_dialog(self.page, dialog)
+            if dialog:
+                close_dialog(self.page, dialog)
             self._notify("La caja no esta abierta.", error=True)
             return
         try:
             monto_pagado = float(monto or "0")
             descuento_valor = float(descuento or "0")
         except ValueError:
-            close_dialog(self.page, dialog)
+            if dialog:
+                close_dialog(self.page, dialog)
             self._notify("Monto o descuento invalidos.", error=True)
             return
         total_original = self.calcular_precio_total()
         total_venta = max(0.0, total_original - descuento_valor)
         if monto_pagado < total_venta:
-            close_dialog(self.page, dialog)
+            if dialog:
+                close_dialog(self.page, dialog)
             self._notify("El monto pagado es insuficiente.", error=True)
             return
         if not metodo_pago:
-            close_dialog(self.page, dialog)
+            if dialog:
+                close_dialog(self.page, dialog)
             self._notify("Seleccione un medio de pago.", error=True)
             return
 
@@ -735,7 +828,8 @@ class Ventas:
             )
 
         cambio = monto_pagado - total_venta
-        close_dialog(self.page, dialog)
+        if dialog:
+            close_dialog(self.page, dialog)
         self.cart.clear()
         self.selected_cart_index = None
         self.numero_factura = self.obtener_numero_factura_actual()
@@ -743,16 +837,102 @@ class Ventas:
         self.label_numero_factura.value = str(self.numero_factura)
         self.scan_status.value = "Venta cobrada. Escanee el siguiente producto."
         self.scan_input.value = ""
+        self.entry_cantidad.value = ""
+        self._set_product_selection(None)
         self.load_products()
         self.refresh_cart()
         self.refresh_sales()
         self.cargar_estado_caja()
-        self._mostrar_vuelto(factura_cobrada, total_venta, monto_pagado, cambio, metodo_pago)
+        if mostrar_vuelto:
+            self._mostrar_vuelto(factura_cobrada, total_venta, monto_pagado, cambio, metodo_pago)
+        else:
+            self._notify(
+                f"Venta rapida #{factura_cobrada}: total {self._money(total_venta)} · vuelto {self._money(cambio)}."
+            )
         self._schedule_scan_focus()
 
-    def realizar_pago(self, _: ft.ControlEvent | None = None) -> None:
+    def venta_rapida(self, _: ft.ControlEvent | None = None) -> None:
+        if not self.caja_abierta:
+            self._notify("La caja no esta abierta.", error=True)
+            self._schedule_scan_focus()
+            return
+
+        synced_index = self._sync_selected_product_to_cart()
+        if self.entry_nombre.value and synced_index is None:
+            self._schedule_quantity_focus()
+            return
+
         if not self.cart:
             self._notify("No hay productos seleccionados para cobrar.", error=True)
+            self._schedule_scan_focus()
+            return
+
+        item_index = synced_index if synced_index is not None else self.selected_cart_index if self.selected_cart_index is not None else len(self.cart) - 1
+        self.refresh_cart()
+        item = self.cart[item_index]
+        monto = ft.TextField(
+            label="Monto recibido",
+            value=str(round(self.calcular_precio_total(), 2)),
+            border_radius=14,
+            autofocus=True,
+        )
+        total_label = ft.Text("", size=18, weight=ft.FontWeight.BOLD)
+        vuelto_label = ft.Text("", size=20, weight=ft.FontWeight.BOLD, color=PALETTE["secondary"])
+
+        def update_labels() -> None:
+            total = self.calcular_precio_total()
+            try:
+                recibido = float(monto.value or "0")
+            except ValueError:
+                recibido = 0.0
+            cambio = max(0.0, recibido - total)
+            total_label.value = f"Total: {self._money(total)}"
+            vuelto_label.value = f"Vuelto: {self._money(cambio)}"
+
+        def update_change(event: ft.ControlEvent | None = None) -> None:
+            update_labels()
+            self.page.update()
+
+        def cobrar(event: ft.ControlEvent) -> None:
+            self.procesar_pago(monto.value or "0", "efectivo", "0", dialog, mostrar_vuelto=False)
+
+        monto.on_change = update_change
+        update_labels()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Venta rapida"),
+            content=ft.Container(
+                width=420,
+                content=ft.Column(
+                    [
+                        ft.Text(str(item["producto"]), weight=ft.FontWeight.BOLD),
+                        monto,
+                        total_label,
+                        vuelto_label,
+                    ],
+                    tight=True,
+                    spacing=10,
+                ),
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda event: close_dialog(self.page, dialog)),
+                ft.ElevatedButton("Cobrar", icon=ft.Icons.FLASH_ON_OUTLINED, on_click=cobrar),
+            ],
+        )
+        show_dialog(self.page, dialog)
+
+    def realizar_pago(self, _: ft.ControlEvent | None = None) -> None:
+        synced_index = self._sync_selected_product_to_cart()
+        if self.entry_nombre.value and synced_index is None:
+            self._schedule_quantity_focus()
+            return
+        if synced_index is not None:
+            self.refresh_cart()
+
+        if not self.cart:
+            self._notify("No hay productos seleccionados para cobrar.", error=True)
+            self._schedule_scan_focus()
             return
         total = self.calcular_precio_total()
         monto = ft.TextField(label="Monto pagado", border_radius=14)
@@ -1147,15 +1327,31 @@ class Ventas:
                 ),
                 self.estado_caja,
                 self.label_precio_total,
-                ft.ElevatedButton(
-                    "Pagar",
-                    icon=ft.Icons.PAYMENTS_OUTLINED,
-                    on_click=self.realizar_pago,
-                    style=ft.ButtonStyle(
-                        shape=ft.RoundedRectangleBorder(radius=16),
-                        bgcolor=PALETTE["secondary"],
-                        color=ft.Colors.WHITE,
-                    ),
+                ft.Row(
+                    [
+                        ft.ElevatedButton(
+                            "Pagar",
+                            icon=ft.Icons.PAYMENTS_OUTLINED,
+                            on_click=self.realizar_pago,
+                            style=ft.ButtonStyle(
+                                shape=ft.RoundedRectangleBorder(radius=16),
+                                bgcolor=PALETTE["secondary"],
+                                color=ft.Colors.WHITE,
+                            ),
+                        ),
+                        ft.ElevatedButton(
+                            "Venta rapida",
+                            icon=ft.Icons.FLASH_ON_OUTLINED,
+                            tooltip="Cobra el total exacto en efectivo",
+                            on_click=self.venta_rapida,
+                            style=ft.ButtonStyle(
+                                shape=ft.RoundedRectangleBorder(radius=16),
+                                bgcolor=PALETTE["accent"],
+                                color=ft.Colors.WHITE,
+                            ),
+                        ),
+                    ],
+                    wrap=True,
                 ),
             ],
             spacing=14,
