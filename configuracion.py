@@ -666,7 +666,7 @@ class Configuracion:
         self.section_content.content = self.section_builders[self.current_section]()
         return ft.Column(
             [
-                page_title("Configuracion", "Catalogos y datos maestros del sistema en una vista Flet por pestanas."),
+                page_title("Configuracion", "Catalogos y datos maestros del sistema."),
                 self.navigation_container,
                 self.section_content,
             ],

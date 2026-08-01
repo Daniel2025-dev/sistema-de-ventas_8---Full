@@ -9,7 +9,7 @@ class Proveedor(SimpleCrudModule):
         super().__init__(
             page=page,
             title="Proveedor",
-            subtitle="Gestiona proveedores y sus datos de contacto desde una interfaz Flet.",
+            subtitle="Gestiona la información de tus proveedores de manera eficiente.",
             table_name="proveedores",
             search_field="nombre",
             fields=[
