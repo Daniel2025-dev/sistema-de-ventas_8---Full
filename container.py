@@ -108,7 +108,7 @@ class Container:
             [
                 page_title(
                     "Resumen general",
-                    "Nueva base visual en Flet para administrar el sistema desde una sola interfaz.",
+                    "Bienvenido al sistema de ventas y control de inventario. Aqui podras ver un resumen de la actividad del negocio.",
                 ),
                 ft.ResponsiveRow(
                     [

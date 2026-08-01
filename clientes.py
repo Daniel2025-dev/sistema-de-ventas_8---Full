@@ -9,7 +9,7 @@ class Clientes(SimpleCrudModule):
         super().__init__(
             page=page,
             title="Clientes",
-            subtitle="Administra la base de clientes con una vista mas limpia y directa.",
+            subtitle="Gestiona la información de tus clientes de manera eficiente.",
             table_name="clientes",
             search_field="nombre",
             delete_pin="1234567890",

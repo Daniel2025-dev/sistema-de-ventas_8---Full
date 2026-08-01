@@ -16,7 +16,7 @@ class Informacion:
             [
                 page_title(
                     "About Us",
-                    "Informacion institucional presentada con un estilo claro y contemporaneo.",
+                    "Innovación logística pensada para todos.",
                 ),
                 ft.ResponsiveRow(
                     [
@@ -75,9 +75,9 @@ class Informacion:
                                             weight=ft.FontWeight.BOLD,
                                         ),
                                         ft.Text(
-                                            "La aplicacion fue reorganizada hacia Flet para ofrecer una experiencia mas moderna, "
-                                            "limpia y coherente con un punto de venta actual, manteniendo la base de datos, "
-                                            "las imagenes y el flujo funcional del proyecto.",
+                                            "Acercamos la tecnología a las personas mediante una solución logística moderna, simple y fácil de usar, "
+                                            "diseñada para optimizar los procesos y ofrecer una experiencia más ágil y cercana.",
+
                                             color=PALETTE["text"],
                                         ),
                                         ft.Container(

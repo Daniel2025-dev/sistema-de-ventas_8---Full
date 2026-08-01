@@ -128,7 +128,7 @@ class Login:
                     ),
                     ft.Container(height=12),
                     ft.Text(
-                        "Interfaz renovada en Flet para un punto de venta mas claro, rapido y moderno.",
+                        "Conectando personas a través de la tecnología.",
                         size=14,
                         color=PALETTE["text"],
                         text_align=ft.TextAlign.CENTER,
@@ -183,7 +183,7 @@ class Login:
                     ),
                     ft.Container(height=10),
                     ft.Text(
-                        "Version 4.2.1",
+                        "Version 1.1.1",
                         color=PALETTE["secondary"],
                         weight=ft.FontWeight.W_600,
                     ),
