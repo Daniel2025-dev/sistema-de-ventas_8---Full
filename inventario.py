@@ -409,4 +409,5 @@ class Inventario:
                 ft.Container(col={"xs": 12, "lg": 7}, content=shell_card(right, expand=True)),
             ],
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
         )

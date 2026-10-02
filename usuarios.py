@@ -10,6 +10,8 @@ from flet_utils import (
     fetch_all,
     fetch_one,
     page_title,
+    responsive_dialog_height,
+    responsive_dialog_width,
     shell_card,
     show_dialog,
     table_view,
@@ -111,8 +113,8 @@ class Usuarios(SimpleCrudModule):
             modal=True,
             title=ft.Text(f"Permisos del rol {role_name}"),
             content=ft.Container(
-                width=460,
-                height=420,
+                width=responsive_dialog_width(self.page, 460),
+                height=responsive_dialog_height(self.page, 420),
                 content=ft.Column(module_controls, scroll=ft.ScrollMode.AUTO),
             ),
             actions=[
@@ -181,4 +183,5 @@ class Usuarios(SimpleCrudModule):
                 ft.Container(col={"xs": 12, "lg": 7}, content=shell_card(table_section, expand=True)),
             ],
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
         )

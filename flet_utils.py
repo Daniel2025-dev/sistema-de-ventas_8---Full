@@ -11,7 +11,8 @@ from typing import Any
 import flet as ft
 from flet.controls.base_control import BaseControl
 
-DB_NAME = "database.db"
+PROJECT_DIR = Path(__file__).resolve().parent
+DB_NAME = str(PROJECT_DIR / "database.db")
 DEFAULT_COMPANY_LOGO = "imagenes/logo_at_logistica.png"
 APP_TITLE = "Punto de Venta Versión 4.2.1"
 
@@ -207,7 +208,7 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
             default=12,
         )
         if control.width is None:
-            control.width = max(240, min(360, longest_label * 9 + 80))
+            control.width = max(220, min(300, longest_label * 9 + 80))
         control.menu_width = max(180, min(440, longest_label * 9 + 72))
         control.menu_height = min(320, max(112, len(option_labels) * 48 + 16))
         control.expanded_insets = 0
@@ -286,6 +287,19 @@ def close_dialog(page: ft.Page, dialog: ft.AlertDialog | None = None) -> None:
             setattr(page, "dialog", None)
     if hasattr(page, "update"):
         page.update()
+
+
+def responsive_dialog_width(page: ft.Page, preferred: int | float) -> int | float:
+    """Keep dialogs inside narrow web and mobile viewports."""
+    if not page.width:
+        return preferred
+    return max(260, min(preferred, page.width - 48))
+
+
+def responsive_dialog_height(page: ft.Page, preferred: int | float) -> int | float:
+    if not page.height:
+        return preferred
+    return max(240, min(preferred, page.height - 120))
 
 
 def parse_expiry_date(value: object) -> date | None:
@@ -624,6 +638,7 @@ class SimpleCrudModule:
                 ft.Container(col={"xs": 12, "lg": 7}, content=shell_card(table_section, expand=True)),
             ],
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
         )
 
 
@@ -631,7 +646,7 @@ def resolve_path(path: str) -> str:
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = str(PROJECT_DIR)
     return os.path.join(base_path, path)
 
 

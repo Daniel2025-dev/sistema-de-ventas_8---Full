@@ -10,6 +10,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 from flet_utils import (
+    DB_NAME,
     DOCUMENT_TYPES,
     PALETTE,
     close_dialog,
@@ -21,6 +22,8 @@ from flet_utils import (
     get_company_info,
     get_currency_symbol,
     page_title,
+    responsive_dialog_height,
+    responsive_dialog_width,
     shell_card,
     show_dialog,
     table_view,
@@ -28,7 +31,7 @@ from flet_utils import (
 
 
 class Ventas:
-    db_name = "database.db"
+    db_name = DB_NAME
 
     def __init__(self, page: ft.Page, user: str | None = None) -> None:
         self.page = page
@@ -510,7 +513,7 @@ class Ventas:
             modal=True,
             title=ft.Text("Producto no registrado"),
             content=ft.Container(
-                width=420,
+                width=responsive_dialog_width(self.page, 420),
                 content=ft.Column([producto, impuesto, cantidad, precio, costo], tight=True),
             ),
             actions=[
@@ -552,7 +555,7 @@ class Ventas:
             modal=True,
             title=ft.Text("Crear cliente"),
             content=ft.Container(
-                width=420,
+                width=responsive_dialog_width(self.page, 420),
                 content=ft.Column([nombre, tipo_id, cedula, celular, direccion, correo], tight=True),
             ),
             actions=[
@@ -716,7 +719,7 @@ class Ventas:
             modal=True,
             title=ft.Text("Pago registrado"),
             content=ft.Container(
-                width=360,
+                width=responsive_dialog_width(self.page, 360),
                 content=ft.Column(
                     [
                         ft.Text(f"Factura: {factura}", weight=ft.FontWeight.BOLD),
@@ -903,7 +906,7 @@ class Ventas:
             modal=True,
             title=ft.Text("Venta rapida"),
             content=ft.Container(
-                width=420,
+                width=responsive_dialog_width(self.page, 420),
                 content=ft.Column(
                     [
                         ft.Text(str(item["producto"]), weight=ft.FontWeight.BOLD),
@@ -951,7 +954,7 @@ class Ventas:
             modal=True,
             title=ft.Text("Realizar pago"),
             content=ft.Container(
-                width=420,
+                width=responsive_dialog_width(self.page, 420),
                 content=ft.Column(
                     [
                         ft.Text(f"Total actual: {self._money(total)}", weight=ft.FontWeight.BOLD),
@@ -1009,7 +1012,7 @@ class Ventas:
             modal=True,
             title=ft.Text("Voucher generado"),
             content=ft.Container(
-                width=420,
+                width=responsive_dialog_width(self.page, 420),
                 content=ft.Column(
                     [
                         ft.Text("El PDF del voucher quedo listo para imprimir."),
@@ -1227,7 +1230,11 @@ class Ventas:
         )
         dialog = ft.AlertDialog(
             title=ft.Text(f"Detalle factura {self.selected_invoice}"),
-            content=ft.Container(width=720, height=360, content=table_view(content, expand=True)),
+            content=ft.Container(
+                width=responsive_dialog_width(self.page, 720),
+                height=responsive_dialog_height(self.page, 360),
+                content=table_view(content, expand=True),
+            ),
         )
         show_dialog(self.page, dialog)
 
@@ -1397,4 +1404,5 @@ class Ventas:
                 ft.Container(col={"xs": 12, "xl": 7}, content=shell_card(right, expand=True)),
             ],
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
         )

@@ -672,4 +672,5 @@ class Configuracion:
             ],
             spacing=16,
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
         )

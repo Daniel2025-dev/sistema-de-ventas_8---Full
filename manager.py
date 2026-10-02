@@ -18,8 +18,8 @@ class Manager:
         page.spacing = 0
         page.window_width = 1280
         page.window_height = 760
-        page.window_min_width = 1180
-        page.window_min_height = 720
+        page.window_min_width = 360
+        page.window_min_height = 600
         page.window_bgcolor = PALETTE["bg"]
         page.vertical_alignment = ft.MainAxisAlignment.START
         page.horizontal_alignment = ft.CrossAxisAlignment.START
@@ -36,6 +36,7 @@ class Manager:
     def show_login(self) -> None:
         if not self.page:
             return
+        self.page.on_resize = None
         self._mount(
             Login(
                 page=self.page,
@@ -47,6 +48,7 @@ class Manager:
     def show_register(self) -> None:
         if not self.page:
             return
+        self.page.on_resize = None
         self._mount(
             Registro(
                 page=self.page,

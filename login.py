@@ -3,11 +3,11 @@ from typing import Callable
 
 import flet as ft
 
-from flet_utils import DEFAULT_COMPANY_LOGO, PALETTE, get_company_info, image_base64, shell_card
+from flet_utils import DB_NAME, DEFAULT_COMPANY_LOGO, PALETTE, get_company_info, image_base64, shell_card
 
 
 class Login:
-    db_name = "database.db"
+    db_name = DB_NAME
 
     def __init__(
         self,
@@ -204,19 +204,26 @@ class Login:
         return ft.Container(
             expand=True,
             gradient=gradient,
-            padding=32,
-            content=ft.ResponsiveRow(
+            padding=ft.Padding.symmetric(horizontal=20, vertical=24),
+            content=ft.Column(
                 [
-                    ft.Container(col={"xs": 12, "md": 6}, content=self._hero_panel()),
-                    ft.Container(col={"xs": 12, "md": 6}, content=self._form_panel()),
+                    ft.ResponsiveRow(
+                        [
+                            ft.Container(col={"xs": 12, "md": 6}, content=self._hero_panel()),
+                            ft.Container(col={"xs": 12, "md": 6}, content=self._form_panel()),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        run_spacing=16,
+                    ),
                 ],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
             ),
         )
 
 
 class Registro:
-    db_name = "database.db"
+    db_name = DB_NAME
 
     def __init__(self, page: ft.Page, on_back: Callable[[], None]) -> None:
         self.page = page
@@ -310,75 +317,82 @@ class Registro:
         logo = image_base64(self.company["image_path"], DEFAULT_COMPANY_LOGO)
         return ft.Container(
             expand=True,
-            padding=32,
+            padding=ft.Padding.symmetric(horizontal=20, vertical=24),
             gradient=ft.LinearGradient(
                 begin=ft.Alignment(0, -1),
                 end=ft.Alignment(0, 1),
                 colors=["#DCEBFF", "#F4F8FF"],
             ),
-            content=ft.ResponsiveRow(
+            content=ft.Column(
                 [
-                    ft.Container(
-                        col={"xs": 12, "md": 5},
-                        content=shell_card(
-                            ft.Column(
-                                [
-                                    ft.Image(src=logo, width=280, height=220, fit="contain")
-                                    if logo
-                                    else ft.Icon(ft.Icons.PERSON_ADD, size=80),
-                                    ft.Text(
-                                        "Nuevo acceso al sistema",
-                                        size=26,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=PALETTE["text"],
-                                        text_align=ft.TextAlign.CENTER,
+                    ft.ResponsiveRow(
+                        [
+                            ft.Container(
+                                col={"xs": 12, "md": 5},
+                                content=shell_card(
+                                    ft.Column(
+                                        [
+                                            ft.Image(src=logo, width=280, height=220, fit="contain")
+                                            if logo
+                                            else ft.Icon(ft.Icons.PERSON_ADD, size=80),
+                                            ft.Text(
+                                                "Nuevo acceso al sistema",
+                                                size=26,
+                                                weight=ft.FontWeight.BOLD,
+                                                color=PALETTE["text"],
+                                                text_align=ft.TextAlign.CENTER,
+                                            ),
+                                            ft.Text(
+                                                "Mantuvimos la misma logica de usuarios y roles, solo cambiando la experiencia visual.",
+                                                text_align=ft.TextAlign.CENTER,
+                                                color=PALETTE["muted"],
+                                            ),
+                                        ],
+                                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                        spacing=12,
                                     ),
-                                    ft.Text(
-                                        "Mantuvimos la misma logica de usuarios y roles, solo cambiando la experiencia visual.",
-                                        text_align=ft.TextAlign.CENTER,
-                                        color=PALETTE["muted"],
-                                    ),
-                                ],
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=12,
+                                    padding=28,
+                                    expand=True,
+                                ),
                             ),
-                            padding=28,
-                            expand=True,
-                        ),
-                    ),
-                    ft.Container(
-                        col={"xs": 12, "md": 7},
-                        content=shell_card(
-                            ft.Column(
-                                [
-                                    ft.Text("Registro", size=30, weight=ft.FontWeight.BOLD),
-                                    self.username,
-                                    self.password,
-                                    self.rol,
-                                    self.key,
-                                    ft.ElevatedButton(
-                                        "Crear usuario",
-                                        icon=ft.Icons.SAVE_OUTLINED,
-                                        height=50,
-                                        style=ft.ButtonStyle(
-                                            shape=ft.RoundedRectangleBorder(radius=16),
-                                            bgcolor=PALETTE["primary"],
-                                            color=ft.Colors.WHITE,
-                                        ),
-                                        on_click=self.registro,
+                            ft.Container(
+                                col={"xs": 12, "md": 7},
+                                content=shell_card(
+                                    ft.Column(
+                                        [
+                                            ft.Text("Registro", size=30, weight=ft.FontWeight.BOLD),
+                                            self.username,
+                                            self.password,
+                                            self.rol,
+                                            self.key,
+                                            ft.ElevatedButton(
+                                                "Crear usuario",
+                                                icon=ft.Icons.SAVE_OUTLINED,
+                                                height=50,
+                                                style=ft.ButtonStyle(
+                                                    shape=ft.RoundedRectangleBorder(radius=16),
+                                                    bgcolor=PALETTE["primary"],
+                                                    color=ft.Colors.WHITE,
+                                                ),
+                                                on_click=self.registro,
+                                            ),
+                                            ft.TextButton(
+                                                "Volver al inicio",
+                                                icon=ft.Icons.ARROW_BACK_ROUNDED,
+                                                on_click=lambda _: self.on_back(),
+                                            ),
+                                        ],
+                                        spacing=14,
                                     ),
-                                    ft.TextButton(
-                                        "Volver al inicio",
-                                        icon=ft.Icons.ARROW_BACK_ROUNDED,
-                                        on_click=lambda _: self.on_back(),
-                                    ),
-                                ],
-                                spacing=14,
+                                    padding=32,
+                                    expand=True,
+                                ),
                             ),
-                            padding=32,
-                            expand=True,
-                        ),
+                        ],
+                        run_spacing=16,
                     ),
-                ]
+                ],
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
             ),
         )

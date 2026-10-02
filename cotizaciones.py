@@ -3,7 +3,7 @@ from collections import defaultdict
 
 import flet as ft
 
-from flet_utils import DOCUMENT_TYPES, PALETTE, close_dialog, execute, expiry_badge, fetch_all, fetch_one, get_currency_symbol, page_title, shell_card, show_dialog, table_view
+from flet_utils import DOCUMENT_TYPES, PALETTE, close_dialog, execute, expiry_badge, fetch_all, fetch_one, get_currency_symbol, page_title, responsive_dialog_height, responsive_dialog_width, shell_card, show_dialog, table_view
 
 
 class Cotizaciones:
@@ -147,7 +147,7 @@ class Cotizaciones:
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("Crear cliente"),
-            content=ft.Container(width=420, content=ft.Column([nombre, tipo_id, cedula, celular, direccion, correo], tight=True)),
+            content=ft.Container(width=responsive_dialog_width(self.page, 420), content=ft.Column([nombre, tipo_id, cedula, celular, direccion, correo], tight=True)),
             actions=[ft.TextButton("Cancelar", on_click=lambda event: close_dialog(self.page, dialog)), ft.ElevatedButton("Guardar", on_click=guardar)],
         )
         show_dialog(self.page, dialog)
@@ -327,8 +327,8 @@ class Cotizaciones:
         dialog = ft.AlertDialog(
             title=ft.Text(f"Detalle cotizacion {self.selected_quote}"),
             content=ft.Container(
-                width=680,
-                height=320,
+                width=responsive_dialog_width(self.page, 680),
+                height=responsive_dialog_height(self.page, 320),
                 content=ft.Column(
                     [
                         table_view(ft.DataTable(
@@ -420,4 +420,5 @@ class Cotizaciones:
                 ft.Container(col={"xs": 12, "xl": 7}, content=shell_card(right, expand=True)),
             ],
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
         )

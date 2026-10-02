@@ -35,6 +35,8 @@ class Container:
         self.company = get_company_info()
         self.active_module = "dashboard"
         self.content = ft.Container(expand=True)
+        self.root = ft.Container(expand=True, bgcolor=PALETTE["bg"])
+        self.compact_mode: bool | None = None
         self.navigation = ft.NavigationRail(
             selected_index=0,
             label_type=ft.NavigationRailLabelType.ALL,
@@ -51,6 +53,17 @@ class Container:
                 for _, label, icon in MODULES
             ],
             on_change=self._on_navigation_change,
+        )
+        self.mobile_navigation = ft.Dropdown(
+            label="Modulo",
+            value="dashboard",
+            options=[
+                ft.dropdown.Option(key=module_name, text=label)
+                for module_name, label, _ in MODULES
+            ],
+            border_radius=14,
+            dense=True,
+            on_select=self._on_mobile_navigation_change,
         )
 
     def _notify(self, message: str, error: bool = False) -> None:
@@ -85,16 +98,28 @@ class Container:
 
     def _on_navigation_change(self, event: ft.ControlEvent) -> None:
         module_name = MODULES[event.control.selected_index][0]
+        self._navigate_to(module_name)
+
+    def _on_mobile_navigation_change(self, event: ft.ControlEvent) -> None:
+        self._navigate_to(str(event.control.value or "dashboard"))
+
+    def _navigate_to(self, module_name: str) -> None:
         if module_name != "dashboard" and not self.verificar_acceso(module_name):
             self.navigation.selected_index = next(
                 index for index, module in enumerate(MODULES) if module[0] == self.active_module
             )
+            self.mobile_navigation.value = self.active_module
             self._notify(
                 f"Usted no posee permisos para ingresar al modulo {module_name}.",
                 error=True,
             )
             return
         self.active_module = module_name
+        selected_index = next(
+            index for index, module in enumerate(MODULES) if module[0] == module_name
+        )
+        self.navigation.selected_index = selected_index
+        self.mobile_navigation.value = module_name
         self._render_content()
 
     def _summary_view(self) -> ft.Control:
@@ -328,12 +353,74 @@ class Container:
             ),
         )
 
-    def build(self) -> ft.Control:
-        self._render_content()
+    def _mobile_header(self) -> ft.Control:
+        logo = image_base64(self.company["image_path"], DEFAULT_COMPANY_LOGO)
         return ft.Container(
-            expand=True,
-            bgcolor=PALETTE["bg"],
-            content=ft.Row(
+            padding=12,
+            bgcolor=PALETTE["sidebar"],
+            border=ft.Border.only(bottom=ft.BorderSide(1, PALETTE["border"])),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Image(src=logo, width=42, height=42, fit="contain")
+                            if logo
+                            else ft.Icon(ft.Icons.STOREFRONT, size=32),
+                            ft.Column(
+                                [
+                                    ft.Text(
+                                        self.company["nombre"],
+                                        size=15,
+                                        weight=ft.FontWeight.BOLD,
+                                        max_lines=1,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
+                                    ft.Text(
+                                        f"{self.user} · {self.rol}",
+                                        size=11,
+                                        color=PALETTE["muted"],
+                                    ),
+                                ],
+                                spacing=1,
+                                expand=True,
+                            ),
+                            ft.IconButton(
+                                ft.Icons.LOGOUT_ROUNDED,
+                                tooltip="Cerrar sesion",
+                                on_click=lambda _: self.on_logout(),
+                            ),
+                        ],
+                        spacing=10,
+                    ),
+                    self.mobile_navigation,
+                ],
+                spacing=8,
+            ),
+        )
+
+    def _is_compact(self) -> bool:
+        return bool(self.page.width and self.page.width < 900)
+
+    def _apply_layout(self, force: bool = False) -> None:
+        compact = self._is_compact()
+        if not force and compact == self.compact_mode:
+            return
+        self.compact_mode = compact
+        if compact:
+            self.root.content = ft.Column(
+                [
+                    self._mobile_header(),
+                    ft.Container(
+                        expand=True,
+                        padding=12,
+                        content=self.content,
+                    ),
+                ],
+                spacing=0,
+                expand=True,
+            )
+        else:
+            self.root.content = ft.Row(
                 [
                     self._sidebar(),
                     ft.Container(
@@ -344,5 +431,16 @@ class Container:
                 ],
                 spacing=0,
                 expand=True,
-            ),
-        )
+            )
+
+    def _on_resize(self, _: ft.ControlEvent) -> None:
+        previous_mode = self.compact_mode
+        self._apply_layout()
+        if self.compact_mode != previous_mode:
+            self.page.update()
+
+    def build(self) -> ft.Control:
+        self._render_content()
+        self.page.on_resize = self._on_resize
+        self._apply_layout(force=True)
+        return self.root
