@@ -102,7 +102,7 @@ class Ventas:
                 ft.DataColumn(ft.Text("Total")),
             ],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
             column_spacing=20,
@@ -117,7 +117,7 @@ class Ventas:
                 ft.DataColumn(ft.Text("Cajero")),
             ],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
         )
@@ -1393,8 +1393,8 @@ class Ventas:
         )
         return ft.ResponsiveRow(
             [
-                ft.Container(col={"xs": 12, "xl": 4}, content=shell_card(left, expand=True)),
-                ft.Container(col={"xs": 12, "xl": 8}, content=shell_card(right, expand=True)),
+                ft.Container(col={"xs": 12, "xl": 5}, content=shell_card(left, expand=True)),
+                ft.Container(col={"xs": 12, "xl": 7}, content=shell_card(right, expand=True)),
             ],
             expand=True,
         )

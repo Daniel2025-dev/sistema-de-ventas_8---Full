@@ -75,7 +75,7 @@ class Manager:
 
 def main() -> None:
     manager = Manager()
-    ft.app(target=manager.main, assets_dir=".")
+    ft.run(main=manager.main, assets_dir=".")
 
 
 if __name__ == "__main__":

@@ -177,8 +177,8 @@ class Usuarios(SimpleCrudModule):
         )
         return ft.ResponsiveRow(
             [
-                ft.Container(col={"xs": 12, "lg": 4}, content=shell_card(form, expand=True)),
-                ft.Container(col={"xs": 12, "lg": 8}, content=shell_card(table_section, expand=True)),
+                ft.Container(col={"xs": 12, "lg": 5}, content=shell_card(form, expand=True)),
+                ft.Container(col={"xs": 12, "lg": 7}, content=shell_card(table_section, expand=True)),
             ],
             expand=True,
         )

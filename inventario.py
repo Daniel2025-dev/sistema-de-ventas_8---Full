@@ -105,7 +105,7 @@ class Inventario:
                 ft.DataColumn(ft.Text("Estado")),
             ],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
             column_spacing=18,
@@ -337,9 +337,9 @@ class Inventario:
                 self.nombre,
                 ft.ResponsiveRow(
                     [
-                        ft.Container(col={"xs": 12, "md": 4}, content=self.codigo),
-                        ft.Container(col={"xs": 12, "md": 4}, content=self.codigo_barras),
-                        ft.Container(col={"xs": 12, "md": 4}, content=self.proveedor),
+                        ft.Container(col={"xs": 12, "md": 6}, content=self.codigo),
+                        ft.Container(col={"xs": 12, "md": 6}, content=self.codigo_barras),
+                        ft.Container(col={"xs": 12, "md": 6}, content=self.proveedor),
                     ]
                 ),
                 ft.ResponsiveRow(
@@ -357,9 +357,9 @@ class Inventario:
                 ),
                 ft.ResponsiveRow(
                     [
-                        ft.Container(col={"xs": 12, "md": 4}, content=self.fecha_vencimiento),
-                        ft.Container(col={"xs": 12, "md": 4}, content=self.lote),
-                        ft.Container(col={"xs": 12, "md": 4}, content=self.estado),
+                        ft.Container(col={"xs": 12, "md": 6}, content=self.fecha_vencimiento),
+                        ft.Container(col={"xs": 12, "md": 6}, content=self.lote),
+                        ft.Container(col={"xs": 12, "md": 6}, content=self.estado),
                     ]
                 ),
                 ft.ResponsiveRow(

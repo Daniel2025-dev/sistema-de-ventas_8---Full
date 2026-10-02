@@ -34,14 +34,14 @@ class Cotizaciones:
         self.cart_table = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(label)) for label in ["Cotizacion", "Cliente", "Producto", "Lote", "Vencimiento", "Precio", "Cantidad", "Impuesto", "Total"]],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
         )
         self.history_table = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(label)) for label in ["Cotizacion", "Cliente", "Total", "Fecha", "Hora", "Cajero"]],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
         )
@@ -416,8 +416,8 @@ class Cotizaciones:
         )
         return ft.ResponsiveRow(
             [
-                ft.Container(col={"xs": 12, "xl": 4}, content=shell_card(left, expand=True)),
-                ft.Container(col={"xs": 12, "xl": 8}, content=shell_card(right, expand=True)),
+                ft.Container(col={"xs": 12, "xl": 5}, content=shell_card(left, expand=True)),
+                ft.Container(col={"xs": 12, "xl": 7}, content=shell_card(right, expand=True)),
             ],
             expand=True,
         )

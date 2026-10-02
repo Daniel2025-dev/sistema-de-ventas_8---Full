@@ -85,16 +85,17 @@ class FieldSpec:
 INPUT_TEXT_STYLE = ft.TextStyle(
     color=PALETTE["text"],
     size=16,
-    weight=ft.FontWeight.W_500,
+    weight=ft.FontWeight.W_600,
 )
 LABEL_TEXT_STYLE = ft.TextStyle(
-    color=PALETTE["muted"],
-    size=15,
-    weight=ft.FontWeight.W_500,
+    color=PALETTE["text"],
+    size=14,
+    weight=ft.FontWeight.W_600,
 )
 HINT_TEXT_STYLE = ft.TextStyle(
     color=PALETTE["muted"],
-    size=15,
+    size=14,
+    weight=ft.FontWeight.W_500,
 )
 HELPER_TEXT_STYLE = ft.TextStyle(
     color=PALETTE["muted"],
@@ -103,6 +104,11 @@ HELPER_TEXT_STYLE = ft.TextStyle(
 ERROR_TEXT_STYLE = ft.TextStyle(
     color=PALETTE["danger"],
     size=13,
+    weight=ft.FontWeight.W_600,
+)
+
+BUTTON_TEXT_STYLE = ft.TextStyle(
+    size=15,
     weight=ft.FontWeight.W_600,
 )
 
@@ -143,11 +149,25 @@ def _walk_controls(control: BaseControl, seen: set[int] | None = None) -> list[B
 
 
 def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
+    if control.height is None and not (
+        isinstance(control, ft.TextField) and control.multiline
+    ):
+        control.height = 56
     control.filled = True
     control.color = PALETTE["text"]
     control.focused_color = PALETTE["text"]
     control.text_style = INPUT_TEXT_STYLE
     control.label_style = LABEL_TEXT_STYLE
+    if isinstance(control.label, str):
+        control.label = ft.Text(
+            control.label,
+            size=14,
+            weight=ft.FontWeight.W_600,
+            color=PALETTE["text"],
+            max_lines=1,
+            no_wrap=True,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
     control.hint_style = HINT_TEXT_STYLE
     control.helper_style = HELPER_TEXT_STYLE
     control.error_style = ERROR_TEXT_STYLE
@@ -156,7 +176,7 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
     control.focused_border_width = 2
     control.border_color = PALETTE["border"]
     control.focused_border_color = PALETTE["primary"]
-    control.content_padding = ft.padding.symmetric(horizontal=16, vertical=16)
+    control.content_padding = ft.Padding.symmetric(horizontal=14, vertical=17)
     if getattr(control, "border_radius", None) is None:
         control.border_radius = 16
     if isinstance(control, ft.TextField):
@@ -167,6 +187,30 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
         control.cursor_color = PALETTE["primary"]
         control.selection_color = PALETTE["primary_soft"]
     elif isinstance(control, ft.Dropdown):
+        control.text_size = 16
+        option_labels: list[str] = []
+        for option in control.options:
+            label = option.text or option.key
+            if not label and isinstance(option.content, ft.Text):
+                label = option.content.value
+            option_labels.append(str(label or ""))
+
+        # Keep the popup proportional to its contents instead of letting an
+        # infinite-width form control expand the overlay across the screen.
+        field_label = (
+            str(control.label.value or "")
+            if isinstance(control.label, ft.Text)
+            else str(control.label or "")
+        )
+        longest_label = max(
+            [len(field_label), *(len(label) for label in option_labels)],
+            default=12,
+        )
+        if control.width is None:
+            control.width = max(240, min(360, longest_label * 9 + 80))
+        control.menu_width = max(180, min(440, longest_label * 9 + 72))
+        control.menu_height = min(320, max(112, len(option_labels) * 48 + 16))
+        control.expanded_insets = 0
         control.fill_color = PALETTE["surface_soft"]
         control.bgcolor = PALETTE["surface"]
         control.focused_bgcolor = PALETTE["surface_soft"]
@@ -177,7 +221,7 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
             elevation=8,
             side=ft.BorderSide(1.2, PALETTE["border"]),
             shape=ft.RoundedRectangleBorder(radius=16),
-            padding=ft.padding.symmetric(vertical=8),
+            padding=ft.Padding.symmetric(vertical=8),
         )
 
 
@@ -203,11 +247,20 @@ def apply_visual_theme(root: ft.Control | BaseControl | None) -> ft.Control | Ba
             control.shape = ft.RoundedRectangleBorder(radius=24)
         elif isinstance(control, ft.SnackBar):
             control.bgcolor = control.bgcolor or PALETTE["primary"]
+        elif isinstance(control, (ft.ElevatedButton, ft.OutlinedButton, ft.TextButton)):
+            if control.style is None:
+                control.style = ft.ButtonStyle()
+            if control.style.text_style is None:
+                control.style.text_style = BUTTON_TEXT_STYLE
         elif isinstance(control, ft.Text):
             if control.color is None:
                 control.color = PALETTE["text"]
             if control.size is None:
-                control.size = 14
+                control.size = 15
+            if control.weight is None and control.size >= 20:
+                control.weight = ft.FontWeight.BOLD
+            elif control.weight is None and control.size >= 16:
+                control.weight = ft.FontWeight.W_600
     return root
 
 
@@ -319,7 +372,7 @@ class SimpleCrudModule:
                 for field in self.fields
             ],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
             data_row_min_height=52,
@@ -567,8 +620,8 @@ class SimpleCrudModule:
         )
         return ft.ResponsiveRow(
             [
-                ft.Container(col={"xs": 12, "lg": 4}, content=shell_card(form, expand=True)),
-                ft.Container(col={"xs": 12, "lg": 8}, content=shell_card(table_section, expand=True)),
+                ft.Container(col={"xs": 12, "lg": 5}, content=shell_card(form, expand=True)),
+                ft.Container(col={"xs": 12, "lg": 7}, content=shell_card(table_section, expand=True)),
             ],
             expand=True,
         )
@@ -777,7 +830,7 @@ def page_title(title: str, subtitle: str | None = None) -> ft.Control:
     ]
     if subtitle:
         text_controls.append(
-            ft.Text(subtitle, size=13, color=PALETTE["muted"])
+            ft.Text(subtitle, size=14, weight=ft.FontWeight.W_500, color=PALETTE["muted"])
         )
     return ft.Column(text_controls, spacing=4)
 
@@ -792,7 +845,7 @@ def stat_card(title: str, value: str, icon: str, tone: str = "primary") -> ft.Co
     bg, fg = color_map[tone]
     return ft.Container(
         bgcolor=PALETTE["surface"],
-        border=ft.border.all(1, PALETTE["border"]),
+        border=ft.Border.all(1, PALETTE["border"]),
         border_radius=22,
         padding=20,
         content=ft.Row(
@@ -824,7 +877,7 @@ def shell_card(content: ft.Control, padding: int = 20, expand: bool = False) -> 
         padding=padding,
         bgcolor=PALETTE["surface"],
         border_radius=16,
-        border=ft.border.all(1, "#D4E0F0"),
+        border=ft.Border.all(1, "#D4E0F0"),
         content=content,
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
     )
@@ -840,7 +893,7 @@ def table_view(table: ft.DataTable, height: int | None = None, expand: bool = Fa
         expand=expand,
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
         border_radius=12,
-        border=ft.border.all(1, PALETTE["border"]),
+        border=ft.Border.all(1, PALETTE["border"]),
         bgcolor=PALETTE["surface"],
         content=ft.Column(
             [
@@ -874,7 +927,21 @@ def app_theme() -> ft.Theme:
         ),
         scaffold_bgcolor=PALETTE["bg"],
         visual_density=ft.VisualDensity.ADAPTIVE_PLATFORM_DENSITY,
-        font_family="Segoe UI",
+        font_family="Noto Sans",
+        text_theme=ft.TextTheme(
+            headline_large=ft.TextStyle(size=32, weight=ft.FontWeight.BOLD, color=PALETTE["text"]),
+            headline_medium=ft.TextStyle(size=28, weight=ft.FontWeight.BOLD, color=PALETTE["text"]),
+            headline_small=ft.TextStyle(size=24, weight=ft.FontWeight.BOLD, color=PALETTE["text"]),
+            title_large=ft.TextStyle(size=21, weight=ft.FontWeight.BOLD, color=PALETTE["text"]),
+            title_medium=ft.TextStyle(size=17, weight=ft.FontWeight.W_600, color=PALETTE["text"]),
+            title_small=ft.TextStyle(size=15, weight=ft.FontWeight.W_600, color=PALETTE["text"]),
+            body_large=ft.TextStyle(size=16, weight=ft.FontWeight.W_500, color=PALETTE["text"]),
+            body_medium=ft.TextStyle(size=15, weight=ft.FontWeight.W_400, color=PALETTE["text"]),
+            body_small=ft.TextStyle(size=13, weight=ft.FontWeight.W_400, color=PALETTE["muted"]),
+            label_large=BUTTON_TEXT_STYLE,
+            label_medium=ft.TextStyle(size=14, weight=ft.FontWeight.W_600, color=PALETTE["text"]),
+            label_small=ft.TextStyle(size=12, weight=ft.FontWeight.W_600, color=PALETTE["muted"]),
+        ),
         use_material3=True,
         divider_color=PALETTE["border"],
         dialog_theme=ft.DialogTheme(
@@ -889,7 +956,8 @@ def app_theme() -> ft.Theme:
                 shape=ft.RoundedRectangleBorder(radius=16),
                 bgcolor=PALETTE["primary"],
                 color=ft.Colors.WHITE,
-                padding=ft.padding.symmetric(horizontal=22, vertical=16),
+                padding=ft.Padding.symmetric(horizontal=22, vertical=16),
+                text_style=BUTTON_TEXT_STYLE,
             )
         ),
         outlined_button_theme=ft.OutlinedButtonTheme(
@@ -898,13 +966,15 @@ def app_theme() -> ft.Theme:
                 color=PALETTE["primary"],
                 side=ft.BorderSide(1.4, PALETTE["border"]),
                 bgcolor=PALETTE["surface"],
-                padding=ft.padding.symmetric(horizontal=22, vertical=16),
+                padding=ft.Padding.symmetric(horizontal=22, vertical=16),
+                text_style=BUTTON_TEXT_STYLE,
             )
         ),
         text_button_theme=ft.TextButtonTheme(
             style=ft.ButtonStyle(
                 color=PALETTE["primary"],
                 shape=ft.RoundedRectangleBorder(radius=14),
+                text_style=BUTTON_TEXT_STYLE,
             )
         ),
         icon_button_theme=ft.IconButtonTheme(
@@ -921,13 +991,13 @@ def app_theme() -> ft.Theme:
                 elevation=8,
                 side=ft.BorderSide(1.2, PALETTE["border"]),
                 shape=ft.RoundedRectangleBorder(radius=16),
-                padding=ft.padding.symmetric(vertical=8),
+                padding=ft.Padding.symmetric(vertical=8),
             ),
         ),
         data_table_theme=ft.DataTableTheme(
             heading_row_color=PALETTE["surface_alt"],
             heading_text_style=ft.TextStyle(color=PALETTE["text"], size=15, weight=ft.FontWeight.BOLD),
-            data_text_style=ft.TextStyle(color=PALETTE["text"], size=15),
+            data_text_style=ft.TextStyle(color=PALETTE["text"], size=15, weight=ft.FontWeight.W_500),
             divider_thickness=1,
             column_spacing=16,
             horizontal_margin=14,

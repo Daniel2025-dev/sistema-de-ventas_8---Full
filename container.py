@@ -279,7 +279,7 @@ class Container:
             width=300,
             padding=20,
             bgcolor=PALETTE["sidebar"],
-            border=ft.border.only(right=ft.BorderSide(1, PALETTE["border"])),
+            border=ft.Border.only(right=ft.BorderSide(1, PALETTE["border"])),
             content=ft.Column(
                 [
                     ft.Row(
@@ -338,7 +338,7 @@ class Container:
                     self._sidebar(),
                     ft.Container(
                         expand=True,
-                        padding=24,
+                        padding=20,
                         content=self.content,
                     ),
                 ],

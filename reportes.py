@@ -15,14 +15,14 @@ class Reportes:
         self.sales_table = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(label)) for label in ["Producto", "Cantidad", "Ventas"]],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
         )
         self.cash_table = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(label)) for label in ["Apertura", "Inicial", "Total caja", "Estado", "Ventas acumuladas", "Cierre"]],
             rows=[],
-            border=ft.border.all(1, PALETTE["border"]),
+            border=ft.Border.all(1, PALETTE["border"]),
             border_radius=12,
             heading_row_color=PALETTE["surface_alt"],
         )
