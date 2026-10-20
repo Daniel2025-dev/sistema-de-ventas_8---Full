@@ -68,7 +68,7 @@ MODULES = [
     ("configuracion", "Configuracion", ft.Icons.SETTINGS_OUTLINED),
     ("gastos", "Gastos", ft.Icons.RECEIPT_LONG_OUTLINED),
     ("usuarios", "Usuarios", ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
-    ("informacion", "About Us", ft.Icons.INFO_OUTLINE),
+    ("informacion", "Información", ft.Icons.INFO_OUTLINE),
 ]
 
 

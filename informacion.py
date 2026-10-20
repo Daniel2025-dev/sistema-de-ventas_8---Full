@@ -15,7 +15,7 @@ class Informacion:
         return ft.Column(
             [
                 page_title(
-                    "About Us",
+                    "Información",
                     "Innovación logística pensada para todos.",
                 ),
                 ft.ResponsiveRow(
