@@ -16,5 +16,6 @@ facturas/*.pdf
 tickets/*.pdf
 
 .env
+supabase/.temp/
 .DS_Store
 Thumbs.db
