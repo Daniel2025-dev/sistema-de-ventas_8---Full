@@ -1,7 +1,6 @@
 import datetime
 import io
 import os
-import sqlite3
 
 import flet as ft
 import pandas as pd
@@ -16,6 +15,7 @@ from flet_utils import (
     execute,
     fetch_one,
     fetch_scalar,
+    get_connection,
     get_company_info,
     image_base64,
     normalize_expiry_date,
@@ -186,7 +186,7 @@ class Configuracion:
 
     def _import_dataframe(self, table_name: str, columns: list[str], rows: list[tuple]) -> int:
         placeholders = ", ".join("?" for _ in columns)
-        with sqlite3.connect(DB_NAME) as connection:
+        with get_connection() as connection:
             cursor = connection.cursor()
             cursor.executemany(
                 f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})",
@@ -400,11 +400,14 @@ class Configuracion:
             missing = [column for column in required if column not in dataframe.columns]
             if missing:
                 raise ValueError(f"Faltan columnas requeridas: {', '.join(missing)}")
-            with sqlite3.connect(DB_NAME) as connection:
+            with get_connection() as connection:
                 cursor = connection.cursor()
                 cursor.execute("SELECT id, nombre FROM impuestos")
                 impuesto_rows = cursor.fetchall()
-            impuestos = {self._normalize_column(str(nombre)): impuesto_id for impuesto_id, nombre in impuesto_rows}
+            impuestos = {
+                self._normalize_column(str(row["nombre"])): row["id"]
+                for row in impuesto_rows
+            }
 
             rows = []
             for _, row in dataframe.iterrows():

@@ -16,28 +16,96 @@ from flet_utils import (
     show_dialog,
     table_view,
 )
+from supabase_service import admin_create_user, admin_delete_user, admin_update_user, supabase_enabled
 
 
 class Usuarios(SimpleCrudModule):
     def __init__(self, page: ft.Page, user: str | None = None) -> None:
         self.user = user
+        fields = [
+            FieldSpec("username", "Usuario"),
+            FieldSpec("password", "Contrasena", password=True),
+            FieldSpec(
+                "rol",
+                "Rol",
+                kind="dropdown",
+                options=["Administrador", "Vendedor", "Supervisor"],
+            ),
+        ]
+        if supabase_enabled():
+            fields.insert(0, FieldSpec("email", "Correo electrónico"))
         super().__init__(
             page=page,
             title="Usuarios",
             subtitle="Gestiona cuentas y define permisos por rol sin cambiar la logica de seguridad.",
             table_name="usuarios",
             search_field="username",
-            fields=[
-                FieldSpec("username", "Usuario"),
-                FieldSpec("password", "Contrasena", password=True),
-                FieldSpec(
-                    "rol",
-                    "Rol",
-                    kind="dropdown",
-                    options=["Administrador", "Vendedor", "Supervisor"],
-                ),
-            ],
+            fields=fields,
         )
+
+    def validate(self) -> bool:
+        if not supabase_enabled():
+            return super().validate()
+        required = ["email", "username", "rol"]
+        if self.selected_id is None:
+            required.append("password")
+        if any(not (self.form_controls[name].value or "").strip() for name in required):
+            self._notify("Complete correo, usuario, rol y la contraseña para usuarios nuevos.", error=True)
+            return False
+        password = (self.form_controls["password"].value or "").strip()
+        if password and len(password) < 8:
+            self._notify("La contraseña debe tener al menos 8 caracteres.", error=True)
+            return False
+        return True
+
+    def save(self, _: ft.ControlEvent | None = None) -> None:
+        if not supabase_enabled():
+            super().save()
+            return
+        if not self.validate():
+            return
+        email = (self.form_controls["email"].value or "").strip()
+        username = (self.form_controls["username"].value or "").strip()
+        password = (self.form_controls["password"].value or "").strip()
+        role = str(self.form_controls["rol"].value or "Vendedor")
+        try:
+            if self.selected_id is None:
+                admin_create_user(email, password, username, role)
+                self._notify("Usuario creado en Supabase Auth.")
+            else:
+                profile = fetch_one("SELECT auth_user_id FROM usuarios WHERE id=?", (self.selected_id,))
+                if not profile or not profile.get("auth_user_id"):
+                    raise ValueError("El perfil no está vinculado a Supabase Auth")
+                admin_update_user(str(profile["auth_user_id"]), email, password or None)
+                execute(
+                    "UPDATE usuarios SET email=?, username=?, rol=? WHERE id=?",
+                    (email, username, role, self.selected_id),
+                )
+                self._notify("Usuario actualizado.")
+        except Exception as error:
+            self._notify(f"No se pudo guardar el usuario: {error}", error=True)
+            return
+        self.clear_form()
+        self.refresh()
+
+    def _perform_delete(self, pin_value: str | None = None) -> None:
+        if not supabase_enabled():
+            super()._perform_delete(pin_value)
+            return
+        if self.selected_id is None:
+            self._notify("Seleccione un usuario.", error=True)
+            return
+        try:
+            profile = fetch_one("SELECT auth_user_id FROM usuarios WHERE id=?", (self.selected_id,))
+            if not profile or not profile.get("auth_user_id"):
+                raise ValueError("El perfil no está vinculado a Supabase Auth")
+            admin_delete_user(str(profile["auth_user_id"]))
+            self._notify("Usuario eliminado de Supabase Auth.")
+        except Exception as error:
+            self._notify(f"No se pudo eliminar el usuario: {error}", error=True)
+            return
+        self.clear_form()
+        self.refresh()
 
     def _notify(self, message: str, error: bool = False) -> None:
         self.page.snack_bar = ft.SnackBar(

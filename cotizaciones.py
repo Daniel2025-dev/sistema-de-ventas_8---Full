@@ -2,6 +2,7 @@ import datetime
 from collections import defaultdict
 
 import flet as ft
+from database import next_document_number, transaction
 
 from flet_utils import DOCUMENT_TYPES, PALETTE, close_dialog, execute, expiry_badge, fetch_all, fetch_one, get_currency_symbol, page_title, responsive_dialog_height, responsive_dialog_width, shell_card, show_dialog, table_view
 
@@ -57,7 +58,7 @@ class Cotizaciones:
         self.page.update()
 
     def obtener_numero_actual(self) -> int:
-        return int(fetch_one("SELECT IFNULL(MAX(cotizacion), 0) + 1 AS numero FROM cotizaciones")["numero"])
+        return next_document_number("cotizacion")
 
     def load_clients(self) -> None:
         self.entry_cliente.options = [ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM clientes ORDER BY nombre")]
@@ -230,8 +231,9 @@ class Cotizaciones:
             return
         fecha = datetime.datetime.now().strftime("%Y-%m-%d")
         hora = datetime.datetime.now().strftime("%H:%M:%S")
-        for item in self.cart:
-            execute(
+        with transaction() as cursor:
+            for item in self.cart:
+                cursor.execute(
                 """
                 INSERT INTO cotizaciones
                 (cotizacion, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, impuesto, fecha_vencimiento, lote)
@@ -252,7 +254,7 @@ class Cotizaciones:
                     item.get("fecha_vencimiento") or "",
                     item.get("lote") or "",
                 ),
-            )
+                )
         self.cart.clear()
         self.selected_cart_index = None
         self.numero_factura = self.obtener_numero_actual()

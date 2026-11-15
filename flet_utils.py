@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import date, datetime
@@ -9,10 +8,20 @@ from pathlib import Path
 from typing import Any
 
 import flet as ft
+
+from database import (
+    SQLITE_PATH,
+    connect,
+    execute,
+    fetch_all,
+    fetch_one,
+    fetch_scalar,
+    is_postgres,
+)
 from flet.controls.base_control import BaseControl
 
 PROJECT_DIR = Path(__file__).resolve().parent
-DB_NAME = str(PROJECT_DIR / "database.db")
+DB_NAME = str(SQLITE_PATH)
 DEFAULT_COMPANY_LOGO = "imagenes/logo_at_logistica.png"
 APP_TITLE = "Punto de Venta Versión 4.2.1"
 
@@ -520,7 +529,7 @@ class SimpleCrudModule:
                     tuple(values) + (self.selected_id,),
                 )
                 self._notify("Registro actualizado correctamente.")
-        except sqlite3.Error as error:
+        except Exception as error:
             self._notify(f"No se pudo guardar el registro: {error}", error=True)
             return
         self.clear_form()
@@ -538,7 +547,7 @@ class SimpleCrudModule:
                 f"DELETE FROM {self.table_name} WHERE {self.id_field}=?",
                 (self.selected_id,),
             )
-        except sqlite3.Error as error:
+        except Exception as error:
             self._notify(f"No se pudo eliminar el registro: {error}", error=True)
             return
         self._notify("Registro eliminado correctamente.")
@@ -666,43 +675,17 @@ def image_base64(path: str | None, fallback: str | None = None) -> str | None:
     return None
 
 
-def dict_factory(cursor: sqlite3.Cursor, row: sqlite3.Row) -> dict[str, Any]:
-    return {column[0]: row[index] for index, column in enumerate(cursor.description)}
-
-
-def get_connection() -> sqlite3.Connection:
-    connection = sqlite3.connect(DB_NAME)
-    connection.row_factory = dict_factory
-    return connection
-
-
-def fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-    with get_connection() as connection:
-        cursor = connection.cursor()
-        cursor.execute(query, params)
-        return cursor.fetchall()
-
-
-def fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
-    rows = fetch_all(query, params)
-    return rows[0] if rows else None
-
-
-def fetch_scalar(query: str, params: tuple[Any, ...] = (), default: Any = None) -> Any:
-    row = fetch_one(query, params)
-    if not row:
-        return default
-    return next(iter(row.values()))
-
-
-def execute(query: str, params: tuple[Any, ...] = ()) -> None:
-    with get_connection() as connection:
-        cursor = connection.cursor()
-        cursor.execute(query, params)
-        connection.commit()
+def get_connection():
+    """Backward-compatible connection factory used by import utilities."""
+    return connect()
 
 
 def ensure_app_schema() -> None:
+    if is_postgres():
+        # PostgreSQL is provisioned through versioned Supabase migrations.
+        # This probe gives a clear startup error when migrations are missing.
+        fetch_scalar("SELECT COUNT(*) FROM empresa", default=0)
+        return
     with get_connection() as connection:
         cursor = connection.cursor()
         cursor.execute(

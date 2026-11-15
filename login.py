@@ -1,9 +1,9 @@
-import sqlite3
 from typing import Callable
 
 import flet as ft
 
-from flet_utils import DB_NAME, DEFAULT_COMPANY_LOGO, PALETTE, get_company_info, image_base64, shell_card
+from flet_utils import DB_NAME, DEFAULT_COMPANY_LOGO, PALETTE, execute, fetch_one, get_company_info, image_base64, shell_card
+from supabase_service import sign_in, supabase_enabled
 
 
 class Login:
@@ -20,7 +20,7 @@ class Login:
         self.on_register = on_register
         self.company = get_company_info()
         self.username = ft.TextField(
-            label="Nombre de usuario",
+            label="Correo electrónico" if supabase_enabled() else "Nombre de usuario",
             border_radius=16,
             filled=True,
             bgcolor=PALETTE["surface_alt"],
@@ -57,30 +57,28 @@ class Login:
             return
 
         try:
-            with sqlite3.connect(self.db_name) as connection:
-                cursor = connection.cursor()
-                cursor.execute(
+            if supabase_enabled():
+                identity = sign_in(user, password)
+                username, rol = identity.username, identity.role
+            else:
+                result = fetch_one(
                     "SELECT rol FROM usuarios WHERE username=? AND password=?",
                     (user, password),
                 )
-                result = cursor.fetchone()
-        except sqlite3.Error as error:
-            self._notify(f"No se pudo abrir la base de datos: {error}", error=True)
-            return
-
-        if not result:
+                if not result:
+                    raise PermissionError("Usuario y/o contraseña incorrecta")
+                username, rol = user, str(result["rol"])
+        except Exception as error:
             self.username.value = ""
             self.password.value = ""
             self.page.update()
-            self._notify("Usuario y/o contrasena incorrecta.", error=True)
+            self._notify(f"No fue posible iniciar sesión: {error}", error=True)
             return
-
-        rol = result[0]
         self.username.value = ""
         self.password.value = ""
         self.page.update()
         self._notify("Ingreso correcto.")
-        self.on_success(user, rol)
+        self.on_success(username, rol)
 
     def _hero_panel(self) -> ft.Control:
         logo = image_base64(self.company["image_path"], DEFAULT_COMPANY_LOGO)
@@ -180,6 +178,7 @@ class Login:
                             bgcolor=PALETTE["surface"],
                         ),
                         on_click=lambda _: self.on_register(),
+                        visible=not supabase_enabled(),
                     ),
                     ft.Container(height=10),
                     ft.Text(
@@ -278,10 +277,7 @@ class Registro:
         return len(user.strip()) > 0 and len(password.strip()) > 0 and len(rol.strip()) > 0
 
     def eje_consulta(self, consulta: str, parametros: tuple) -> None:
-        with sqlite3.connect(self.db_name) as connection:
-            cursor = connection.cursor()
-            cursor.execute(consulta, parametros)
-            connection.commit()
+        execute(consulta, parametros)
 
     def registro(self, _: ft.ControlEvent | None = None) -> None:
         user = self.username.value or ""
@@ -306,7 +302,7 @@ class Registro:
                 "INSERT INTO usuarios VALUES (?,?,?,?)",
                 (None, user, password, rol),
             )
-        except sqlite3.Error as error:
+        except Exception as error:
             self._notify(f"No se pudo crear el usuario: {error}", error=True)
             return
 

@@ -6,8 +6,10 @@ from collections import defaultdict
 from pathlib import Path
 
 import flet as ft
+from database import next_document_number, transaction
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from supabase_service import supabase_enabled, upload_private_file
 
 from flet_utils import (
     DB_NAME,
@@ -137,7 +139,7 @@ class Ventas:
         self.page.update()
 
     def obtener_numero_factura_actual(self) -> int:
-        return int(fetch_scalar("SELECT IFNULL(MAX(factura), 0) + 1 FROM ventas", default=1))
+        return next_document_number("factura")
 
     @staticmethod
     def _normalize_code(value: object) -> str:
@@ -783,8 +785,9 @@ class Ventas:
         total_impuesto = sum(item["impuesto"] for item in self.cart)
         factura_cobrada = self.numero_factura
 
-        for item in self.cart:
-            execute(
+        with transaction() as cursor:
+            for item in self.cart:
+                cursor.execute(
                 """
                 INSERT INTO ventas
                 (factura, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, medio_pago, impuesto, fecha_vencimiento, lote)
@@ -806,16 +809,20 @@ class Ventas:
                     item.get("fecha_vencimiento") or "",
                     item.get("lote") or "",
                 ),
-            )
-            if not item["manual"]:
-                execute(
-                    "UPDATE inventario SET stock = stock - ? WHERE nombre = ?",
-                    (item["cantidad"], item["producto"]),
                 )
+                if not item["manual"]:
+                    cursor.execute(
+                        "UPDATE inventario SET stock = stock - ? WHERE nombre = ? AND stock >= ?",
+                        (item["cantidad"], item["producto"], item["cantidad"]),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ValueError(f"Stock insuficiente para {item['producto']}")
 
-        caja = fetch_one("SELECT id, total_en_caja, total_ventas_acumuladas, impuesto, descuento FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1")
-        if caja:
-            execute(
+            cursor.execute("SELECT id, total_en_caja, total_ventas_acumuladas, impuesto, descuento FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1")
+            caja_row = cursor.fetchone()
+            caja = dict(caja_row) if caja_row else None
+            if caja:
+                cursor.execute(
                 """
                 UPDATE caja
                 SET total_en_caja=?, total_ventas_acumuladas=?, impuesto=?, descuento=?
@@ -828,7 +835,7 @@ class Ventas:
                     float(caja.get("descuento") or 0) + descuento_valor,
                     caja["id"],
                 ),
-            )
+                )
 
         cambio = monto_pagado - total_venta
         if dialog:
@@ -1000,10 +1007,13 @@ class Ventas:
         else:
             subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def _mostrar_voucher_generado(self, pdf_path: Path) -> None:
+    def _mostrar_voucher_generado(self, pdf_path: Path, remote_url: str | None = None) -> None:
         def abrir(event: ft.ControlEvent) -> None:
             try:
-                self._abrir_pdf(pdf_path)
+                if remote_url:
+                    self.page.launch_url(remote_url)
+                else:
+                    self._abrir_pdf(pdf_path)
                 close_dialog(self.page, dialog)
             except Exception:
                 self._notify(f"No se pudo abrir automaticamente. Archivo: {pdf_path}", error=True)
@@ -1016,7 +1026,7 @@ class Ventas:
                 content=ft.Column(
                     [
                         ft.Text("El PDF del voucher quedo listo para imprimir."),
-                        ft.Text(str(pdf_path), selectable=True, color=PALETTE["muted"]),
+                        ft.Text(remote_url or str(pdf_path), selectable=True, color=PALETTE["muted"]),
                     ],
                     tight=True,
                     spacing=8,
@@ -1139,11 +1149,17 @@ class Ventas:
         center("Gracias por su compra", size=9, bold=True)
         doc.save()
 
-        self._mostrar_voucher_generado(pdf_path)
-        try:
-            self._abrir_pdf(pdf_path)
-        except Exception:
-            self._notify(f"Voucher generado en {pdf_path}. Abralo para imprimir.", error=True)
+        remote_url = None
+        if supabase_enabled():
+            try:
+                remote_url = upload_private_file(
+                    pdf_path,
+                    "comprobantes",
+                    f"ventas/Voucher_{self.selected_invoice}.pdf",
+                )
+            except Exception as error:
+                self._notify(f"Voucher local creado, pero no se pudo subir: {error}", error=True)
+        self._mostrar_voucher_generado(pdf_path, remote_url)
 
     def _sales_summary_rows(self) -> list[dict]:
         factura = (self.invoice_filter.value or "").strip()
@@ -1247,19 +1263,25 @@ class Ventas:
             self._notify("No se encontro la factura seleccionada.", error=True)
             return
         total_factura = sum(float(row["total"]) for row in detalles)
-        for row in detalles:
-            execute("UPDATE inventario SET stock = stock + ? WHERE nombre = ?", (row["cantidad"], row["producto"]))
-        execute("DELETE FROM ventas WHERE factura=?", (self.selected_invoice,))
-        caja = fetch_one("SELECT id, total_ventas_acumuladas, total_en_caja FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1")
-        if caja:
-            execute(
+        with transaction() as cursor:
+            for row in detalles:
+                cursor.execute(
+                    "UPDATE inventario SET stock = stock + ? WHERE nombre = ?",
+                    (row["cantidad"], row["producto"]),
+                )
+            cursor.execute("DELETE FROM ventas WHERE factura=?", (self.selected_invoice,))
+            cursor.execute("SELECT id, total_ventas_acumuladas, total_en_caja FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1")
+            caja_row = cursor.fetchone()
+            caja = dict(caja_row) if caja_row else None
+            if caja:
+                cursor.execute(
                 "UPDATE caja SET total_ventas_acumuladas=?, total_en_caja=? WHERE id=?",
                 (
                     max(0.0, float(caja["total_ventas_acumuladas"] or 0) - total_factura),
                     max(0.0, float(caja["total_en_caja"] or 0) - total_factura),
                     caja["id"],
                 ),
-            )
+                )
         self.selected_invoice = None
         self.numero_factura = self.obtener_numero_factura_actual()
         self.label_numero_factura.value = str(self.numero_factura)

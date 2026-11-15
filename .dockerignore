@@ -1,0 +1,9 @@
+venv
+__pycache__
+.git
+.env
+database.db
+*.pdf
+vouchers
+facturas
+cotizaciones
