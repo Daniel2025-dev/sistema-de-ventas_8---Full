@@ -34,6 +34,8 @@ class Container:
         self.on_logout = on_logout
         self.company = get_company_info()
         self.active_module = "dashboard"
+        self.view_cache: dict[str, ft.Control] = {}
+        self._allowed_modules: set[str] | None = None
         self.content = ft.Container(expand=True)
         self.root = ft.Container(expand=True, bgcolor=PALETTE["bg"])
         self.compact_mode: bool | None = None
@@ -83,18 +85,20 @@ class Container:
     def verificar_acceso(self, modulo: str) -> bool:
         if self.rol == "Administrador":
             return True
-        permiso = fetch_one(
-            """
-            SELECT p.modulo
-            FROM usuarios u
-            JOIN roles r ON LOWER(r.nombre) = LOWER(u.rol)
-            JOIN permisos_rol pr ON pr.id_rol = r.id
-            JOIN permisos p ON p.id = pr.id_permiso
-            WHERE u.username = ? AND p.modulo = ?
-            """,
-            (self.user, modulo),
-        )
-        return permiso is not None
+        if self._allowed_modules is None:
+            rows = fetch_all(
+                """
+                SELECT p.modulo
+                FROM usuarios u
+                JOIN roles r ON LOWER(r.nombre) = LOWER(u.rol)
+                JOIN permisos_rol pr ON pr.id_rol = r.id
+                JOIN permisos p ON p.id = pr.id_permiso
+                WHERE u.username = ?
+                """,
+                (self.user,),
+            )
+            self._allowed_modules = {str(row["modulo"]) for row in rows}
+        return modulo in self._allowed_modules
 
     def _on_navigation_change(self, event: ft.ControlEvent) -> None:
         module_name = MODULES[event.control.selected_index][0]
@@ -123,10 +127,19 @@ class Container:
         self._render_content()
 
     def _summary_view(self) -> ft.Control:
-        total_productos = fetch_scalar("SELECT COUNT(*) FROM inventario", default=0)
-        total_clientes = fetch_scalar("SELECT COUNT(*) FROM clientes", default=0)
-        total_ventas = fetch_scalar("SELECT COUNT(*) FROM ventas", default=0)
-        total_gastos = fetch_scalar("SELECT IFNULL(SUM(valor), 0) FROM gastos", default=0)
+        summary = fetch_one(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM inventario) AS productos,
+                (SELECT COUNT(*) FROM clientes) AS clientes,
+                (SELECT COUNT(*) FROM ventas) AS ventas,
+                (SELECT COALESCE(SUM(valor), 0) FROM gastos) AS gastos
+            """
+        ) or {}
+        total_productos = summary.get("productos", 0)
+        total_clientes = summary.get("clientes", 0)
+        total_ventas = summary.get("ventas", 0)
+        total_gastos = summary.get("gastos", 0)
         empresa_logo = image_base64(self.company["image_path"], DEFAULT_COMPANY_LOGO)
 
         return ft.Column(
@@ -289,13 +302,21 @@ class Container:
             "gastos": lambda: Gastos(self.page).build(),
             "usuarios": lambda: Usuarios(self.page).build(),
             "informacion": lambda: Informacion(self.page).build(),
-            "configuracion": lambda: Configuracion(self.page).build(),
+            "configuracion": lambda: Configuracion(
+                self.page, on_company_updated=self._company_updated
+            ).build(),
         }
+
+    def _company_updated(self) -> None:
+        self.company = get_company_info()
+        self.view_cache.pop("dashboard", None)
 
     def _render_content(self) -> None:
         registry = self._module_registry()
         view_builder = registry.get(self.active_module, self._summary_view)
-        self.content.content = apply_visual_theme(view_builder())
+        if self.active_module not in self.view_cache:
+            self.view_cache[self.active_module] = apply_visual_theme(view_builder())
+        self.content.content = self.view_cache[self.active_module]
         self.page.update()
 
     def _sidebar(self) -> ft.Control:

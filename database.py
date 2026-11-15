@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -17,6 +18,8 @@ except ImportError:
 
 PROJECT_DIR = Path(__file__).resolve().parent
 SQLITE_PATH = PROJECT_DIR / "database.db"
+_pool: Any | None = None
+_pool_lock = threading.Lock()
 
 
 def database_url() -> str:
@@ -71,9 +74,11 @@ class CursorAdapter:
 
 
 class ConnectionAdapter:
-    def __init__(self, connection: Any, postgres: bool) -> None:
+    def __init__(self, connection: Any, postgres: bool, releaser: Any = None) -> None:
         self._connection = connection
         self._postgres = postgres
+        self._releaser = releaser
+        self._closed = False
 
     def cursor(self) -> CursorAdapter:
         if self._postgres:
@@ -89,7 +94,13 @@ class ConnectionAdapter:
         self._connection.rollback()
 
     def close(self) -> None:
-        self._connection.close()
+        if self._closed:
+            return
+        self._closed = True
+        if self._releaser:
+            self._releaser(self._connection)
+        else:
+            self._connection.close()
 
     def __enter__(self) -> "ConnectionAdapter":
         return self
@@ -102,6 +113,32 @@ class ConnectionAdapter:
         self.close()
 
 
+def _postgres_pool() -> Any:
+    """Reuse TLS database connections instead of reconnecting on every click."""
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            try:
+                from psycopg_pool import ConnectionPool
+            except ImportError as error:
+                raise RuntimeError(
+                    "DATABASE_URL usa PostgreSQL, pero falta instalar psycopg-pool."
+                ) from error
+            _pool = ConnectionPool(
+                conninfo=database_url(),
+                min_size=1,
+                max_size=int(os.getenv("DATABASE_POOL_SIZE", "8")),
+                timeout=15,
+                max_idle=300,
+                max_lifetime=1800,
+                open=True,
+            )
+            _pool.wait(timeout=20)
+    return _pool
+
+
 def connect() -> ConnectionAdapter:
     if is_postgres():
         try:
@@ -111,7 +148,9 @@ def connect() -> ConnectionAdapter:
                 "DATABASE_URL usa PostgreSQL, pero falta instalar psycopg. "
                 "Ejecute: pip install -r requirements.txt"
             ) from error
-        return ConnectionAdapter(psycopg.connect(database_url()), True)
+        pool = _postgres_pool()
+        connection = pool.getconn(timeout=15)
+        return ConnectionAdapter(connection, True, pool.putconn)
 
     connection = sqlite3.connect(SQLITE_PATH)
     connection.row_factory = sqlite3.Row

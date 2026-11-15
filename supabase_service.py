@@ -136,3 +136,31 @@ def upload_private_file(path: Path, bucket: str, object_name: str) -> str:
     if not signed_url:
         raise RuntimeError("Supabase no devolvió la URL del archivo")
     return str(signed_url)
+
+
+def upload_public_bytes(
+    content: bytes,
+    bucket: str,
+    object_name: str,
+    content_type: str,
+) -> str:
+    """Upload a public brand asset and return its stable CDN URL."""
+    secret = os.getenv("SUPABASE_SECRET_KEY", "").strip()
+    if not supabase_url() or not secret:
+        raise RuntimeError("Supabase Storage no está configurado")
+    from supabase import create_client
+
+    client = create_client(supabase_url(), secret)
+    # Brand assets are intentionally public so the login screen can render them.
+    client.storage.update_bucket(bucket, {"public": True})
+    client.storage.from_(bucket).upload(
+        object_name,
+        content,
+        {"content-type": content_type, "upsert": "true", "cache-control": "3600"},
+    )
+    public_url = client.storage.from_(bucket).get_public_url(object_name)
+    if isinstance(public_url, dict):
+        public_url = public_url.get("publicURL") or public_url.get("publicUrl")
+    if not public_url:
+        raise RuntimeError("Supabase no devolvió la URL pública de la imagen")
+    return str(public_url)

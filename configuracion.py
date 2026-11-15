@@ -1,6 +1,7 @@
 import datetime
 import io
 import os
+from typing import Callable
 
 import flet as ft
 import pandas as pd
@@ -18,16 +19,24 @@ from flet_utils import (
     get_connection,
     get_company_info,
     image_base64,
+    invalidate_reference_caches,
     normalize_expiry_date,
     page_title,
     shell_card,
 )
+from supabase_service import upload_public_bytes
 
 
 class Configuracion:
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(
+        self,
+        page: ft.Page,
+        user: str | None = None,
+        on_company_updated: Callable[[], None] | None = None,
+    ) -> None:
         self.page = page
         self.user = user
+        self.on_company_updated = on_company_updated
         self.current_section = "empresa"
         self.navigation_container = ft.Container()
         self.section_content = ft.Container(expand=True)
@@ -52,6 +61,12 @@ class Configuracion:
         self.email = ft.TextField(label="Email", value=company["email"], border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
         self.website = ft.TextField(label="Sitio web", value=company["website"], border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
         self.image_path = ft.TextField(label="Ruta del logo", value=company["image_path"], border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
+        initial_logo = image_base64(company["image_path"], DEFAULT_COMPANY_LOGO)
+        self.logo_preview = ft.Image(src=initial_logo, height=280, fit="contain")
+        self.logo_feedback = ft.Text(
+            "Selecciona JPG, PNG o WEBP. Se ajustará automáticamente a un logo cuadrado.",
+            color=PALETTE["muted"],
+        )
 
         self.categories = SimpleCrudModule(
             page=page,
@@ -149,7 +164,69 @@ class Configuracion:
                 """,
                 values,
             )
+        invalidate_reference_caches()
+        if self.on_company_updated:
+            self.on_company_updated()
         self._notify("Informacion de empresa actualizada.")
+
+    @staticmethod
+    def _prepare_logo(content: bytes) -> bytes:
+        """Normalize any supported image into a lightweight 512px transparent PNG."""
+        from PIL import Image
+
+        with Image.open(io.BytesIO(content)) as source:
+            source = source.convert("RGBA")
+            source.thumbnail((480, 480), Image.Resampling.LANCZOS)
+            canvas = Image.new("RGBA", (512, 512), (255, 255, 255, 0))
+            position = ((512 - source.width) // 2, (512 - source.height) // 2)
+            canvas.alpha_composite(source, position)
+            output = io.BytesIO()
+            canvas.save(output, format="PNG", optimize=True)
+            return output.getvalue()
+
+    async def pick_company_logo(self, _: ft.ControlEvent | None = None) -> None:
+        try:
+            files = await self.file_picker.pick_files(
+                dialog_title="Seleccionar logo de la empresa",
+                allowed_extensions=["png", "jpg", "jpeg", "webp"],
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allow_multiple=False,
+                with_data=True,
+                compression_quality=90,
+            )
+            if not files:
+                return
+            selected = files[0]
+            content = getattr(selected, "bytes", None)
+            if not content and getattr(selected, "path", None):
+                with open(selected.path, "rb") as file_handle:
+                    content = file_handle.read()
+            if not content:
+                raise RuntimeError("El navegador no entregó el contenido del archivo")
+            if len(content) > 10 * 1024 * 1024:
+                raise ValueError("La imagen no puede superar 10 MB")
+
+            prepared = self._prepare_logo(content)
+            self.logo_feedback.value = "Subiendo y optimizando logo..."
+            self.logo_feedback.color = PALETTE["primary"]
+            self.page.update()
+            public_url = upload_public_bytes(
+                prepared,
+                "imagenes",
+                "logos/empresa.png",
+                "image/png",
+            )
+            # Cache-busting makes every connected device display the new logo.
+            public_url = f"{public_url}?v={int(datetime.datetime.now().timestamp())}"
+            self.image_path.value = public_url
+            self.logo_preview.src = prepared
+            self.logo_feedback.value = "Logo listo. Presiona Guardar empresa para aplicarlo."
+            self.logo_feedback.color = PALETTE["success"]
+            self.page.update()
+        except Exception as error:
+            self.logo_feedback.value = f"No se pudo procesar el logo: {error}"
+            self.logo_feedback.color = PALETTE["danger"]
+            self.page.update()
 
     def _normalize_column(self, value: str) -> str:
         return (
@@ -587,7 +664,20 @@ class Configuracion:
                                     ]
                                 ),
                                 self.website,
-                                self.image_path,
+                                ft.ResponsiveRow(
+                                    [
+                                        ft.Container(col={"xs": 12, "md": 8}, content=self.image_path),
+                                        ft.Container(
+                                            col={"xs": 12, "md": 4},
+                                            content=ft.ElevatedButton(
+                                                "Examinar logo",
+                                                icon=ft.Icons.UPLOAD_FILE_OUTLINED,
+                                                on_click=self.pick_company_logo,
+                                            ),
+                                        ),
+                                    ]
+                                ),
+                                self.logo_feedback,
                                 ft.ElevatedButton(
                                     "Guardar empresa",
                                     icon=ft.Icons.SAVE_OUTLINED,
@@ -613,12 +703,12 @@ class Configuracion:
                                 ft.Container(
                                     height=300,
                                     alignment=ft.Alignment(0, 0),
-                                    content=ft.Image(src=preview, height=300, fit="contain")
+                                    content=self.logo_preview
                                     if preview
                                     else ft.Icon(ft.Icons.STOREFRONT, size=80),
                                 ),
                                 ft.Text(
-                                    "Puedes seguir usando la ruta actual de la imagen sin mover archivos del proyecto.",
+                                    "La imagen se centra, conserva su proporción y se guarda en Supabase para todos los dispositivos.",
                                     color=PALETTE["muted"],
                                 ),
                             ],

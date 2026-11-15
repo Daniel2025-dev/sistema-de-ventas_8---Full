@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from functools import lru_cache
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -262,6 +263,15 @@ def apply_visual_theme(root: ft.Control | BaseControl | None) -> ft.Control | Ba
                 control.style = ft.ButtonStyle()
             if control.style.text_style is None:
                 control.style.text_style = BUTTON_TEXT_STYLE
+        elif isinstance(control, ft.Row):
+            # Action bars must remain usable on phones and narrow tablets.
+            actionable = sum(
+                isinstance(item, (ft.ElevatedButton, ft.OutlinedButton, ft.TextButton, ft.IconButton))
+                for item in control.controls
+            )
+            if actionable >= 2:
+                control.wrap = True
+                control.run_spacing = 8
         elif isinstance(control, ft.Text):
             if control.color is None:
                 control.color = PALETTE["text"]
@@ -668,6 +678,8 @@ def image_base64(path: str | None, fallback: str | None = None) -> str | None:
     for candidate in candidates:
         if not candidate:
             continue
+        if str(candidate).startswith(("https://", "http://", "data:image/")):
+            return str(candidate)
         abs_candidate = resolve_path(candidate)
         if not os.path.exists(abs_candidate):
             continue
@@ -799,6 +811,7 @@ def ensure_app_schema() -> None:
         connection.commit()
 
 
+@lru_cache(maxsize=1)
 def get_company_info() -> dict[str, str]:
     row = fetch_one(
         "SELECT nombre, direccion, telefono, email, website, image_path, tipo_id, numero_id FROM empresa LIMIT 1"
@@ -818,8 +831,14 @@ def get_company_info() -> dict[str, str]:
     }
 
 
+@lru_cache(maxsize=1)
 def get_currency_symbol() -> str:
     return fetch_scalar("SELECT simbolo FROM moneda ORDER BY id LIMIT 1", default="$")
+
+
+def invalidate_reference_caches() -> None:
+    get_company_info.cache_clear()
+    get_currency_symbol.cache_clear()
 
 
 def page_title(title: str, subtitle: str | None = None) -> ft.Control:
