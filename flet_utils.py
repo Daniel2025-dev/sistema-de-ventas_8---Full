@@ -462,6 +462,10 @@ class SimpleCrudModule:
         query, params = self._base_query()
         return fetch_scalar(f"SELECT COUNT(*) FROM ({query}) AS subquery", params, default=0)
 
+    def _display_value(self, row: dict[str, Any], field: FieldSpec) -> str:
+        value = row.get(field.name, "")
+        return "" if value is None else str(value)
+
     def refresh(self) -> None:
         base_query, params = self._base_query()
         offset = self.current_page * self.page_size
@@ -473,7 +477,7 @@ class SimpleCrudModule:
             ft.DataRow(
                 cells=[ft.DataCell(ft.Text(str(row.get(self.id_field, ""))))]
                 + [
-                    ft.DataCell(ft.Text(str(row.get(field.name, ""))))
+                    ft.DataCell(ft.Text(self._display_value(row, field)))
                     for field in self.fields
                 ],
                 on_select_change=lambda event, row=row: self.select_row(row),

@@ -42,6 +42,17 @@ class Usuarios(SimpleCrudModule):
             search_field="username",
             fields=fields,
         )
+        if supabase_enabled():
+            password_control = self.form_controls["password"]
+            if isinstance(password_control, ft.TextField):
+                password_control.helper_text = (
+                    "Protegida por Supabase. Escribe una nueva solo para reemplazarla."
+                )
+
+    def _display_value(self, row: dict, field: FieldSpec) -> str:
+        if supabase_enabled() and field.name == "password":
+            return "••••••••"
+        return super()._display_value(row, field)
 
     def validate(self) -> bool:
         if not supabase_enabled():
