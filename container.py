@@ -36,6 +36,7 @@ class Container:
         self.active_module = "dashboard"
         self.view_cache: dict[str, ft.Control] = {}
         self._allowed_modules: set[str] | None = None
+        self._preload_started = False
         self.content = ft.Container(expand=True)
         self.root = ft.Container(expand=True, bgcolor=PALETTE["bg"])
         self.compact_mode: bool | None = None
@@ -319,6 +320,34 @@ class Container:
         self.content.content = self.view_cache[self.active_module]
         self.page.update()
 
+    def _preload_views(self) -> None:
+        """Build screens while the user reads the dashboard, not after a click."""
+        registry = self._module_registry()
+        priority = [
+            "ventas",
+            "inventario",
+            "clientes",
+            "cotizaciones",
+            "pedidos",
+            "proveedor",
+            "gastos",
+            "reportes",
+            "configuracion",
+            "usuarios",
+            "informacion",
+        ]
+        for module_name in priority:
+            if module_name in self.view_cache:
+                continue
+            try:
+                prepared = apply_visual_theme(registry[module_name]())
+                # A fast user click may have populated it while we were building.
+                self.view_cache.setdefault(module_name, prepared)
+            except Exception:
+                # Do not affect the active screen; a normal navigation will retry
+                # and surface the original error in its usual context.
+                continue
+
     def _sidebar(self) -> ft.Control:
         logo = image_base64(self.company["image_path"], DEFAULT_COMPANY_LOGO)
         return ft.Container(
@@ -464,4 +493,7 @@ class Container:
         self._render_content()
         self.page.on_resize = self._on_resize
         self._apply_layout(force=True)
+        if not self._preload_started:
+            self._preload_started = True
+            self.page.run_thread(self._preload_views)
         return self.root
