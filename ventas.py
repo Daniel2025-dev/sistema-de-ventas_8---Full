@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import flet as ft
-from database import next_document_number, transaction
+from database import next_document_number, reserve_document_number, transaction
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from supabase_service import supabase_enabled, upload_private_file
@@ -184,7 +184,33 @@ class Ventas:
 
     def load_clients(self) -> None:
         rows = fetch_all("SELECT nombre FROM clientes ORDER BY nombre")
+        if not rows:
+            execute(
+                """
+                INSERT INTO clientes (nombre, tipo_id, cedula, celular, direccion, correo)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "Cliente Mostrador",
+                    "CC",
+                    "0",
+                    "0",
+                    "Venta rápida",
+                    "sin_correo@local",
+                ),
+            )
+            rows = [{"nombre": "Cliente Mostrador"}]
         self.entry_cliente.options = [ft.dropdown.Option(row["nombre"]) for row in rows]
+        if not self.entry_cliente.value and rows:
+            preferred = next(
+                (
+                    row["nombre"]
+                    for row in rows
+                    if "mostrador" in str(row["nombre"]).lower()
+                ),
+                rows[0]["nombre"],
+            )
+            self.entry_cliente.value = preferred
 
     def _quick_client(self) -> str:
         if self.entry_cliente.value:
@@ -221,9 +247,14 @@ class Ventas:
     def load_products(self) -> None:
         rows = fetch_all(
             """
-            SELECT nombre, codigo, codigo_barras, precio, costo, stock, impuesto_id, estado, fecha_vencimiento, lote
+            SELECT inventario.nombre, inventario.codigo, inventario.codigo_barras,
+                   inventario.precio, inventario.costo, inventario.stock,
+                   inventario.impuesto_id, inventario.estado,
+                   inventario.fecha_vencimiento, inventario.lote,
+                   COALESCE(impuestos.tasa, 0) AS tasa_impuesto
             FROM inventario
-            ORDER BY nombre
+            LEFT JOIN impuestos ON impuestos.id = inventario.impuesto_id
+            ORDER BY inventario.nombre
             """
         )
         self.product_lookup_by_name = {}
@@ -241,6 +272,7 @@ class Ventas:
                 "costo": float(row.get("costo") or 0),
                 "fecha_vencimiento": row.get("fecha_vencimiento") or "",
                 "lote": row.get("lote") or "",
+                "tasa_impuesto": float(row.get("tasa_impuesto") or 0),
             }
             self.product_lookup_by_name[product["nombre"]] = product
             options.append(ft.dropdown.Option(product["nombre"]))
@@ -269,11 +301,7 @@ class Ventas:
         return max(0, int(product["stock"]) - self._cart_reserved_quantity(product["nombre"], ignore_index))
 
     def _tax_rate_for_product(self, product: dict) -> float:
-        impuesto_id = product.get("impuesto_id")
-        if not impuesto_id:
-            return 0.0
-        impuesto = fetch_one("SELECT tasa FROM impuestos WHERE id=?", (impuesto_id,))
-        return float(impuesto["tasa"]) if impuesto else 0.0
+        return float(product.get("tasa_impuesto") or 0)
 
     def _find_cart_item_index(self, cliente: str, producto: str) -> int | None:
         for index, item in enumerate(self.cart):
@@ -442,7 +470,6 @@ class Ventas:
             self._schedule_scan_focus()
             return
 
-        self.load_products()
         product = self._find_product_by_code(barcode)
         if not product:
             self.scan_status.value = f"Codigo no encontrado: {barcode}"
@@ -452,13 +479,19 @@ class Ventas:
             self._schedule_scan_focus()
             return
 
-        self._quick_client()
-        self._set_product_selection(product)
-        self.scan_status.value = f"Producto encontrado: {product['nombre']}. Digite la cantidad."
+        cliente = self._quick_client()
+        if not self._upsert_catalog_item(cliente, product, 1):
+            self.scan_input.value = ""
+            self.page.update()
+            self._schedule_scan_focus()
+            return
+        self.scan_status.value = (
+            f"Agregado: {product['nombre']} · escanee el siguiente producto."
+        )
         self.scan_input.value = ""
-        self.entry_cantidad.value = ""
-        self.page.update()
-        self._schedule_quantity_focus()
+        self.entry_cantidad.value = "1"
+        self.refresh_cart()
+        self._schedule_scan_focus()
 
     def productos_no_registrados(self, _: ft.ControlEvent | None = None) -> None:
         if not self.entry_cliente.value:
@@ -783,18 +816,13 @@ class Ventas:
         fecha_actual = datetime.datetime.now().strftime("%Y-%m-%d")
         hora_actual = datetime.datetime.now().strftime("%H:%M:%S")
         total_impuesto = sum(item["impuesto"] for item in self.cart)
-        factura_cobrada = self.numero_factura
+        factura_cobrada = 0
 
         with transaction() as cursor:
-            for item in self.cart:
-                cursor.execute(
-                """
-                INSERT INTO ventas
-                (factura, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, medio_pago, impuesto, fecha_vencimiento, lote)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            factura_cobrada = reserve_document_number(cursor, "factura")
+            sale_rows = [
                 (
-                    self.numero_factura,
+                    factura_cobrada,
                     item["cliente"],
                     item["producto"],
                     item["precio"],
@@ -808,38 +836,54 @@ class Ventas:
                     item["impuesto"],
                     item.get("fecha_vencimiento") or "",
                     item.get("lote") or "",
-                ),
                 )
-                if not item["manual"]:
-                    cursor.execute(
-                        "UPDATE inventario SET stock = stock - ? WHERE nombre = ? AND stock >= ?",
-                        (item["cantidad"], item["producto"], item["cantidad"]),
-                    )
-                    if cursor.rowcount != 1:
-                        raise ValueError(f"Stock insuficiente para {item['producto']}")
+                for item in self.cart
+            ]
+            cursor.executemany(
+                """
+                INSERT INTO ventas
+                (factura, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, medio_pago, impuesto, fecha_vencimiento, lote)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                sale_rows,
+            )
+            stock_rows = [
+                (item["cantidad"], item["producto"], item["cantidad"])
+                for item in self.cart
+                if not item["manual"]
+            ]
+            if stock_rows:
+                cursor.executemany(
+                    "UPDATE inventario SET stock = stock - ? WHERE nombre = ? AND stock >= ?",
+                    stock_rows,
+                )
+                if cursor.rowcount != len(stock_rows):
+                    raise ValueError("El stock cambió durante el cobro. Revise el carrito.")
 
-            cursor.execute("SELECT id, total_en_caja, total_ventas_acumuladas, impuesto, descuento FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1")
-            caja_row = cursor.fetchone()
-            caja = dict(caja_row) if caja_row else None
-            if caja:
-                cursor.execute(
+            cursor.execute(
                 """
                 UPDATE caja
-                SET total_en_caja=?, total_ventas_acumuladas=?, impuesto=?, descuento=?
-                WHERE id=?
+                SET total_en_caja=COALESCE(total_en_caja, 0) + ?,
+                    total_ventas_acumuladas=COALESCE(total_ventas_acumuladas, 0) + ?,
+                    impuesto=COALESCE(impuesto, 0) + ?,
+                    descuento=COALESCE(descuento, 0) + ?
+                WHERE id=(SELECT id FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1)
                 """,
-                (
-                    float(caja["total_en_caja"] or 0) + total_venta,
-                    float(caja["total_ventas_acumuladas"] or 0) + total_venta,
-                    float(caja.get("impuesto") or 0) + total_impuesto,
-                    float(caja.get("descuento") or 0) + descuento_valor,
-                    caja["id"],
-                ),
+                (total_venta, total_venta, total_impuesto, descuento_valor),
                 )
 
         cambio = monto_pagado - total_venta
         if dialog:
             close_dialog(self.page, dialog)
+        sold_items = list(self.cart)
+        for item in sold_items:
+            if item["manual"]:
+                continue
+            product = self.product_lookup_by_name.get(item["producto"])
+            if product:
+                product["stock"] = max(
+                    0, int(product["stock"]) - int(item["cantidad"])
+                )
         self.cart.clear()
         self.selected_cart_index = None
         self.numero_factura = self.obtener_numero_factura_actual()
@@ -847,12 +891,14 @@ class Ventas:
         self.label_numero_factura.value = str(self.numero_factura)
         self.scan_status.value = "Venta cobrada. Escanee el siguiente producto."
         self.scan_input.value = ""
-        self.entry_cantidad.value = ""
+        self.entry_cantidad.value = "1"
         self._set_product_selection(None)
-        self.load_products()
         self.refresh_cart()
-        self.refresh_sales()
-        self.cargar_estado_caja()
+        self.monto_total_ventas += total_venta
+        self.estado_caja.value = (
+            f"Caja abierta · ventas acumuladas {self._money(self.monto_total_ventas)}"
+        )
+        self.page.run_thread(self.refresh_sales)
         if mostrar_vuelto:
             self._mostrar_vuelto(factura_cobrada, total_venta, monto_pagado, cambio, metodo_pago)
         else:
@@ -945,10 +991,16 @@ class Ventas:
             self._schedule_scan_focus()
             return
         total = self.calcular_precio_total()
-        monto = ft.TextField(label="Monto pagado", border_radius=14)
+        monto = ft.TextField(
+            label="Monto pagado",
+            value=str(round(total, 2)),
+            border_radius=14,
+            autofocus=True,
+        )
         descuento = ft.TextField(label="Descuento", value="0", border_radius=14)
         metodo_pago = ft.Dropdown(
             label="Medio de pago",
+            value="efectivo",
             border_radius=14,
             options=[
                 ft.dropdown.Option("efectivo"),

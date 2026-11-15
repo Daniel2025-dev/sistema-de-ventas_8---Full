@@ -206,11 +206,28 @@ def validate_identifier(value: str) -> str:
 
 
 def next_document_number(document: str) -> int:
+    """Preview the next number without consuming it."""
     if document not in {"factura", "cotizacion"}:
         raise ValueError("Tipo de documento no permitido")
-    if is_postgres():
-        sequence = "factura_numero_seq" if document == "factura" else "cotizacion_numero_seq"
-        return int(fetch_scalar(f"SELECT nextval('{sequence}')", default=1))
     column = "factura" if document == "factura" else "cotizacion"
     table = "ventas" if document == "factura" else "cotizaciones"
     return int(fetch_scalar(f"SELECT COALESCE(MAX({column}), 0) + 1 FROM {table}", default=1))
+
+
+def reserve_document_number(cursor: CursorAdapter, document: str) -> int:
+    """Reserve a number only while the final sale/quote transaction is running."""
+    if document not in {"factura", "cotizacion"}:
+        raise ValueError("Tipo de documento no permitido")
+    column = "factura" if document == "factura" else "cotizacion"
+    table = "ventas" if document == "factura" else "cotizaciones"
+    if is_postgres():
+        # Serialize cashiers for the few milliseconds used to allocate a number.
+        lock_id = 42001 if document == "factura" else 42002
+        cursor.execute("SELECT pg_advisory_xact_lock(?)", (lock_id,))
+    cursor.execute(f"SELECT COALESCE(MAX({column}), 0) + 1 AS numero FROM {table}")
+    row = cursor.fetchone()
+    if row is None:
+        return 1
+    if isinstance(row, dict):
+        return int(row["numero"])
+    return int(row[0])
