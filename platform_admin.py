@@ -7,7 +7,7 @@ import uuid
 
 import flet as ft
 
-from database import transaction
+from database import fetch_all, is_postgres, transaction
 from flet_utils import PALETTE, page_title, shell_card
 from tenant_context import TenantContext
 
@@ -22,26 +22,26 @@ def create_store_with_invitation(context: TenantContext, name: str, owner_email:
     email = owner_email.strip().casefold()
     display_name = name.strip() or "Mi negocio"
     with transaction(context) as cursor:
+        lock_suffix = " FOR UPDATE" if is_postgres() else ""
         cursor.execute(
             """SELECT id, organization_id FROM organization_invitations
                WHERE email=? AND role='store_admin' AND status='pending'
-               ORDER BY created_at DESC LIMIT 1 FOR UPDATE""", (email,),
+               ORDER BY created_at DESC LIMIT 1""" + lock_suffix, (email,),
         )
         pending = cursor.fetchone()
         if pending:
+            expiry = "datetime('now', '+48 hours')" if not is_postgres() else "now()+interval '48 hours'"
             cursor.execute(
-                """UPDATE organization_invitations
-                   SET token_hash=?, delivery_status='local',
-                       delivery_attempts=delivery_attempts+1,
-                       expires_at=now()+interval '48 hours'
-                   WHERE id=?""", (token_hash, pending["id"]),
+                "UPDATE organization_invitations SET token_hash=?, delivery_status='local', "
+                f"delivery_attempts=delivery_attempts+1, expires_at={expiry} WHERE id=?",
+                (token_hash, pending["id"]),
             )
             return str(pending["organization_id"]), token
         cursor.execute("INSERT INTO organizations(id, name, created_by) VALUES (?, ?, ?)", (organization_id, display_name, context.auth_user_id))
         cursor.execute("INSERT INTO empresa(organization_id, nombre, direccion, telefono, email, website, image_path, tipo_id, numero_id) VALUES (?, ?, '', '', '', '', '', '', '')", (organization_id, display_name))
         for role_name in ("Administrador", "Supervisor", "Vendedor"):
             cursor.execute("INSERT INTO roles(organization_id, nombre) VALUES (?, ?)", (organization_id, role_name))
-        cursor.execute("INSERT INTO organization_invitations(id, organization_id, email, role, token_hash, status, delivery_status, delivery_attempts, invited_by) VALUES (?, ?, ?, 'store_admin', ?, 'pending', 'local', 1, ?)", (invitation_id, organization_id, email, token_hash, context.auth_user_id))
+        cursor.execute("INSERT INTO organization_invitations(id, organization_id, email, role, token_hash, status, delivery_status, delivery_attempts, invited_by, expires_at) VALUES (?, ?, ?, 'store_admin', ?, 'pending', 'local', 1, ?, datetime('now', '+48 hours'))" if not is_postgres() else "INSERT INTO organization_invitations(id, organization_id, email, role, token_hash, status, delivery_status, delivery_attempts, invited_by) VALUES (?, ?, ?, 'store_admin', ?, 'pending', 'local', 1, ?)", (invitation_id, organization_id, email, token_hash, context.auth_user_id))
     return organization_id, token
 
 

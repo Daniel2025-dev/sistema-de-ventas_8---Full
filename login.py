@@ -70,8 +70,9 @@ class Login:
                 profile = fetch_one("SELECT organization_id FROM usuarios WHERE username=?", (user,)) or {}
                 context = TenantContext(
                     auth_user_id=f"local:{user}", email="", username=user,
-                    organization_id=str(profile.get("organization_id") or "00000000-0000-0000-0000-000000000001"),
-                    role="store_admin" if str(result["rol"]).lower() == "administrador" else "cashier",
+                    organization_id=None if str(result["rol"]).lower() == "administrador" else str(profile.get("organization_id") or "00000000-0000-0000-0000-000000000001"),
+                    role="platform_admin" if str(result["rol"]).lower() == "administrador" else "cashier",
+                    is_platform_admin=str(result["rol"]).lower() == "administrador",
                 )
         except Exception as error:
             self.username.value = ""
