@@ -88,7 +88,9 @@ class Login:
         self.on_success(context)
 
     def _hero_panel(self) -> ft.Control:
-        login_logo = image_base64("imagenes/logo_pos_transparente.png")
+        # En Flet Web el navegador debe recibir una ruta del directorio de
+        # assets, nunca la ruta absoluta del archivo dentro del servidor.
+        login_logo = "imagenes/logo_pos_transparente.png"
         return shell_card(
             ft.Column(
                 [
