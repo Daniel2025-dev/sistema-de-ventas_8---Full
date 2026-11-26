@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from database import fetch_one, transaction
+from database import fetch_one, is_postgres, transaction
 from tenant_context import PLATFORM_ADMIN, TenantContext
 
 
@@ -112,6 +112,48 @@ def register_from_invitation(token: str, email: str, password: str) -> str:
     if not response.user:
         raise RuntimeError("Supabase no creó el usuario")
     return accept_invitation(token.strip(), str(response.user.id), email)
+
+
+def register_local_from_invitation(token: str, email: str, password: str) -> str:
+    """SQLite-only acceptance used to exercise the complete flow without email."""
+    if is_postgres():
+        raise RuntimeError("El registro local solo está disponible con SQLite")
+    if len(password) < 8:
+        raise ValueError("La contraseña debe tener al menos 8 caracteres")
+    normalized_email = email.strip().casefold()
+    token_hash = hashlib.sha256(token.strip().encode()).hexdigest()
+    with transaction() as cursor:
+        cursor.execute(
+            """SELECT id, organization_id, email, role
+               FROM organization_invitations
+               WHERE token_hash=? AND status='pending'
+                 AND (expires_at IS NULL OR expires_at>datetime('now'))""",
+            (token_hash,),
+        )
+        invite = cursor.fetchone()
+        if not invite or str(invite["email"]).casefold() != normalized_email:
+            raise PermissionError("El token no corresponde al correo o ya expiró")
+        auth_user_id = f"local:{invite['id']}"
+        legacy_role = "Administrador" if invite["role"] == "store_admin" else "Vendedor"
+        cursor.execute(
+            """INSERT INTO usuarios
+               (organization_id, auth_user_id, email, username, password, rol, activo)
+               VALUES (?, ?, ?, ?, ?, ?, 1)""",
+            (invite["organization_id"], auth_user_id, normalized_email,
+             normalized_email, password, legacy_role),
+        )
+        cursor.execute(
+            """INSERT INTO organization_memberships
+               (id, organization_id, auth_user_id, email, username, role, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'active')""",
+            (str(invite["id"]), invite["organization_id"], auth_user_id,
+             normalized_email, normalized_email, invite["role"]),
+        )
+        cursor.execute(
+            "UPDATE organization_invitations SET status='accepted', accepted_at=datetime('now') WHERE id=?",
+            (invite["id"],),
+        )
+        return str(invite["organization_id"])
 
 
 def request_password_recovery(email: str) -> None:

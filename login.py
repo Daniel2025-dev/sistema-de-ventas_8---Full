@@ -3,7 +3,7 @@ from typing import Callable
 import flet as ft
 
 from flet_utils import DB_NAME, PALETTE, execute, fetch_one, image_base64, shell_card
-from supabase_service import register_from_invitation, request_password_recovery, sign_in, supabase_enabled
+from supabase_service import register_from_invitation, register_local_from_invitation, request_password_recovery, sign_in, supabase_enabled
 from tenant_context import TenantContext
 
 
@@ -68,11 +68,12 @@ class Login:
                 if not result:
                     raise PermissionError("Usuario y/o contraseña incorrecta")
                 profile = fetch_one("SELECT organization_id FROM usuarios WHERE username=?", (user,)) or {}
+                is_platform_admin = str(user).strip().casefold() == "admin"
                 context = TenantContext(
                     auth_user_id=f"local:{user}", email="", username=user,
-                    organization_id=None if str(result["rol"]).lower() == "administrador" else str(profile.get("organization_id") or "00000000-0000-0000-0000-000000000001"),
-                    role="platform_admin" if str(result["rol"]).lower() == "administrador" else "cashier",
-                    is_platform_admin=str(result["rol"]).lower() == "administrador",
+                    organization_id=None if is_platform_admin else str(profile.get("organization_id") or "00000000-0000-0000-0000-000000000001"),
+                    role="platform_admin" if is_platform_admin else ("store_admin" if str(result["rol"]).lower() == "administrador" else "cashier"),
+                    is_platform_admin=is_platform_admin,
                 )
         except Exception as error:
             self.username.value = ""
@@ -165,7 +166,7 @@ class Login:
                         icon=ft.Icons.MARK_EMAIL_READ_OUTLINED,
                         height=50,
                         on_click=self._show_invitation_dialog,
-                        visible=supabase_enabled(),
+                        visible=True,
                     ),
                     ft.TextButton(
                         "Recuperar contraseña",
@@ -204,7 +205,10 @@ class Login:
 
         def accept(_event: ft.ControlEvent) -> None:
             try:
-                register_from_invitation(token.value or "", email.value or "", password.value or "")
+                if supabase_enabled():
+                    register_from_invitation(token.value or "", email.value or "", password.value or "")
+                else:
+                    register_local_from_invitation(token.value or "", email.value or "", password.value or "")
                 dialog.open = False
                 self.username.value = email.value
                 self._notify("Invitación aceptada. Confirme su correo si Supabase se lo solicita y luego inicie sesión.")
