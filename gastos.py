@@ -3,10 +3,11 @@ import datetime
 import flet as ft
 
 from flet_utils import FieldSpec, SimpleCrudModule
+from tenant_context import TenantContext
 
 
 class Gastos(SimpleCrudModule):
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.user = user
         super().__init__(
             page=page,
@@ -21,6 +22,7 @@ class Gastos(SimpleCrudModule):
                 FieldSpec("entidad", "Entidad"),
                 FieldSpec("fecha", "Fecha"),
             ],
+            context=context,
         )
         fecha_control = self.form_controls["fecha"]
         if isinstance(fecha_control, ft.TextField):

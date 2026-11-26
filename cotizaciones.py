@@ -5,13 +5,15 @@ import flet as ft
 from database import next_document_number, transaction
 
 from flet_utils import DOCUMENT_TYPES, PALETTE, close_dialog, execute, expiry_badge, fetch_all, fetch_one, get_currency_symbol, page_title, responsive_dialog_height, responsive_dialog_width, shell_card, show_dialog, table_view
+from tenant_context import TenantContext
 
 
 class Cotizaciones:
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.page = page
         self.user = user or "Sistema"
-        self.currency = get_currency_symbol()
+        self.organization_id = context.require_organization() if context else None
+        self.currency = get_currency_symbol(self.organization_id)
         self.cart: list[dict] = []
         self.selected_cart_index: int | None = None
         self.selected_quote: int | None = None
@@ -58,20 +60,20 @@ class Cotizaciones:
         self.page.update()
 
     def obtener_numero_actual(self) -> int:
-        return next_document_number("cotizacion")
+        return next_document_number("cotizacion", self.organization_id)
 
     def load_clients(self) -> None:
-        self.entry_cliente.options = [ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM clientes ORDER BY nombre")]
+        self.entry_cliente.options = [ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM clientes WHERE organization_id=? ORDER BY nombre", (self.organization_id,))]
 
     def load_products(self) -> None:
-        self.entry_nombre.options = [ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM inventario ORDER BY nombre")]
+        self.entry_nombre.options = [ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM inventario WHERE organization_id=? ORDER BY nombre", (self.organization_id,))]
 
     def actualizar_stock(self) -> None:
         if not self.entry_nombre.value:
             self.stock_label.value = "Stock: -"
             self.page.update()
             return
-        row = fetch_one("SELECT stock FROM inventario WHERE nombre=?", (self.entry_nombre.value,))
+        row = fetch_one("SELECT stock FROM inventario WHERE nombre=? AND organization_id=?", (self.entry_nombre.value, self.organization_id))
         self.stock_label.value = f"Stock: {row['stock'] if row else 0}"
         self.page.update()
 
@@ -89,7 +91,7 @@ class Cotizaciones:
         if cantidad <= 0:
             self._notify("La cantidad debe ser mayor a cero.", error=True)
             return
-        product = fetch_one("SELECT precio, costo, stock, impuesto_id, fecha_vencimiento, lote FROM inventario WHERE nombre=?", (producto,))
+        product = fetch_one("SELECT precio, costo, stock, impuesto_id, fecha_vencimiento, lote FROM inventario WHERE nombre=? AND organization_id=?", (producto, self.organization_id))
         if not product:
             self._notify("Producto no encontrado.", error=True)
             return
@@ -98,7 +100,7 @@ class Cotizaciones:
             return
         tasa = 0.0
         if product.get("impuesto_id"):
-            impuesto = fetch_one("SELECT tasa FROM impuestos WHERE id=?", (product["impuesto_id"],))
+            impuesto = fetch_one("SELECT tasa FROM impuestos WHERE id=? AND organization_id=?", (product["impuesto_id"], self.organization_id))
             tasa = float(impuesto["tasa"]) if impuesto else 0.0
         subtotal = float(product["precio"]) * cantidad
         impuesto_total = subtotal * (tasa / 100)
@@ -236,11 +238,11 @@ class Cotizaciones:
                 cursor.execute(
                 """
                 INSERT INTO cotizaciones
-                (cotizacion, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, impuesto, fecha_vencimiento, lote)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (organization_id, cotizacion, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, impuesto, fecha_vencimiento, lote)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    self.numero_factura,
+                    self.organization_id, self.numero_factura,
                     item["cliente"],
                     item["producto"],
                     item["precio"],
@@ -264,7 +266,7 @@ class Cotizaciones:
         self._notify("Cotizacion registrada correctamente.")
 
     def _history_rows(self) -> list[dict]:
-        rows = fetch_all("SELECT cotizacion, cliente, total, fecha, hora, cajero FROM cotizaciones ORDER BY cotizacion DESC")
+        rows = fetch_all("SELECT cotizacion, cliente, total, fecha, hora, cajero FROM cotizaciones WHERE organization_id=? ORDER BY cotizacion DESC", (self.organization_id,))
         filter_quote = (self.filter_quote.value or "").strip()
         filter_client = (self.filter_client.value or "").strip().lower()
         grouped: dict[int, dict] = defaultdict(lambda: {"cliente": "", "total": 0.0, "fecha": "", "hora": "", "cajero": ""})
@@ -322,9 +324,9 @@ class Cotizaciones:
             """
             SELECT producto, precio, cantidad, impuesto, total, fecha_vencimiento, lote
             FROM cotizaciones
-            WHERE cotizacion=?
+            WHERE cotizacion=? AND organization_id=?
             """,
-            (self.selected_quote,),
+            (self.selected_quote, self.organization_id),
         )
         dialog = ft.AlertDialog(
             title=ft.Text(f"Detalle cotizacion {self.selected_quote}"),

@@ -1,15 +1,17 @@
 import flet as ft
 
 from flet_utils import PALETTE, execute, expiry_badge, fetch_all, fetch_one, normalize_expiry_date, page_title, shell_card, table_view
+from tenant_context import TenantContext
 
 
 class Inventario:
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.page = page
         self.user = user
+        self.organization_id = context.require_organization() if context else None
         self.selected_id: int | None = None
         self.impuestos = {
-            row["nombre"]: row["id"] for row in fetch_all("SELECT id, nombre FROM impuestos ORDER BY nombre")
+            row["nombre"]: row["id"] for row in fetch_all("SELECT id, nombre FROM impuestos WHERE organization_id=? ORDER BY nombre", (self.organization_id,))
         }
         self.impuestos_por_id = {value: key for key, value in self.impuestos.items()}
         self.search = ft.TextField(
@@ -34,7 +36,7 @@ class Inventario:
             border_radius=16,
             filled=True,
             bgcolor=PALETTE["surface_alt"],
-            options=[ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM proveedores ORDER BY nombre")],
+            options=[ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM proveedores WHERE organization_id=? ORDER BY nombre", (self.organization_id,))],
         )
         self.precio = ft.TextField(label="Precio", border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
         self.costo = ft.TextField(label="Costo", border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
@@ -52,14 +54,14 @@ class Inventario:
             border_radius=16,
             filled=True,
             bgcolor=PALETTE["surface_alt"],
-            options=[ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM categorias ORDER BY nombre")],
+            options=[ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM categorias WHERE organization_id=? ORDER BY nombre", (self.organization_id,))],
         )
         self.sucursal = ft.Dropdown(
             label="Sucursal",
             border_radius=16,
             filled=True,
             bgcolor=PALETTE["surface_alt"],
-            options=[ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM sucursal ORDER BY nombre")],
+            options=[ft.dropdown.Option(row["nombre"]) for row in fetch_all("SELECT nombre FROM sucursal WHERE organization_id=? ORDER BY nombre", (self.organization_id,))],
         )
         self.estado = ft.Dropdown(
             label="Estado",
@@ -189,14 +191,14 @@ class Inventario:
             """
             SELECT id, nombre
             FROM inventario
-            WHERE id != COALESCE(?, -1)
+            WHERE organization_id=? AND id != COALESCE(?, -1)
               AND (
                     TRIM(CAST(codigo AS TEXT)) = ?
                     OR (? <> '' AND TRIM(COALESCE(codigo_barras, '')) = ?)
                   )
             LIMIT 1
             """,
-            (self.selected_id, codigo, codigo_barras, codigo_barras),
+            (self.organization_id, self.selected_id, codigo, codigo_barras, codigo_barras),
         )
         if duplicate:
             self._notify(
@@ -234,10 +236,10 @@ class Inventario:
                 execute(
                     """
                     INSERT INTO inventario
-                    (nombre, proveedor, precio, costo, stock, categoria, sucursal, estado, image_path, codigo, codigo_barras, impuesto_id, fecha_vencimiento, lote)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (organization_id, nombre, proveedor, precio, costo, stock, categoria, sucursal, estado, image_path, codigo, codigo_barras, impuesto_id, fecha_vencimiento, lote)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    values,
+                    (self.organization_id,) + values,
                 )
                 self._notify("Producto agregado correctamente.")
             else:
@@ -245,9 +247,9 @@ class Inventario:
                     """
                     UPDATE inventario
                     SET nombre=?, proveedor=?, precio=?, costo=?, stock=?, categoria=?, sucursal=?, estado=?, image_path=?, codigo=?, codigo_barras=?, impuesto_id=?, fecha_vencimiento=?, lote=?
-                    WHERE id=?
+                    WHERE id=? AND organization_id=?
                     """,
-                    values + (self.selected_id,),
+                    values + (self.selected_id, self.organization_id),
                 )
                 self._notify("Producto actualizado correctamente.")
         except Exception as error:
@@ -261,7 +263,7 @@ class Inventario:
             self._notify("Seleccione un producto para eliminar.", error=True)
             return
         try:
-            execute("DELETE FROM inventario WHERE id=?", (self.selected_id,))
+            execute("DELETE FROM inventario WHERE id=? AND organization_id=?", (self.selected_id, self.organization_id))
         except Exception as error:
             self._notify(f"No se pudo eliminar el producto: {error}", error=True)
             return
@@ -294,17 +296,17 @@ class Inventario:
                 """
                 SELECT id, nombre, codigo, codigo_barras, proveedor, precio, stock, estado, costo, categoria, sucursal, image_path, impuesto_id, fecha_vencimiento, lote
                 FROM inventario
-                WHERE nombre LIKE ? OR CAST(codigo AS TEXT) LIKE ? OR COALESCE(codigo_barras, '') LIKE ? OR COALESCE(lote, '') LIKE ?
+                WHERE organization_id=? AND (nombre LIKE ? OR CAST(codigo AS TEXT) LIKE ? OR COALESCE(codigo_barras, '') LIKE ? OR COALESCE(lote, '') LIKE ?)
                 ORDER BY id DESC
                 """,
-                (f"%{term}%", f"%{term}%", f"%{term}%", f"%{term}%"),
+                (self.organization_id, f"%{term}%", f"%{term}%", f"%{term}%", f"%{term}%"),
             )
         else:
             rows = fetch_all(
                 """
                 SELECT id, nombre, codigo, codigo_barras, proveedor, precio, stock, estado, costo, categoria, sucursal, image_path, impuesto_id, fecha_vencimiento, lote
-                FROM inventario ORDER BY id DESC
-                """
+                FROM inventario WHERE organization_id=? ORDER BY id DESC
+                """, (self.organization_id,)
             )
 
         self.table.rows = [

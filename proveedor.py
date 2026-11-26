@@ -1,10 +1,11 @@
 import flet as ft
 
 from flet_utils import DOCUMENT_TYPES, FieldSpec, SimpleCrudModule
+from tenant_context import TenantContext
 
 
 class Proveedor(SimpleCrudModule):
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.user = user
         super().__init__(
             page=page,
@@ -20,4 +21,5 @@ class Proveedor(SimpleCrudModule):
                 FieldSpec("direccion", "Direccion"),
                 FieldSpec("correo", "Correo"),
             ],
+            context=context,
         )

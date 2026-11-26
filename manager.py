@@ -3,6 +3,8 @@ import flet as ft
 from container import Container
 from flet_utils import APP_TITLE, PALETTE, app_theme, apply_visual_theme, ensure_app_schema
 from login import Login, Registro
+from tenant_context import TenantContext
+from platform_admin import PlatformAdminView
 
 
 class Manager:
@@ -56,14 +58,18 @@ class Manager:
             ).build()
         )
 
-    def show_container(self, user: str, rol: str) -> None:
+    def show_container(self, context: TenantContext) -> None:
         if not self.page:
+            return
+        if context.is_platform_admin:
+            self._mount(PlatformAdminView(self.page, context, self.show_login).build())
             return
         self._mount(
             Container(
                 page=self.page,
-                user=user,
-                rol=rol,
+                user=context.username,
+                rol=context.role,
+                context=context,
                 on_logout=self.show_login,
             ).build()
         )
