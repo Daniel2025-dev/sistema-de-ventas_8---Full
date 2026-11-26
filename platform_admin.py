@@ -40,7 +40,18 @@ def create_store_with_invitation(context: TenantContext, name: str, owner_email:
         cursor.execute("INSERT INTO organizations(id, name, created_by) VALUES (?, ?, ?)", (organization_id, display_name, context.auth_user_id))
         cursor.execute("INSERT INTO empresa(organization_id, nombre, direccion, telefono, email, website, image_path, tipo_id, numero_id) VALUES (?, ?, '', '', '', '', '', '', '')", (organization_id, display_name))
         for role_name in ("Administrador", "Supervisor", "Vendedor"):
-            cursor.execute("INSERT INTO roles(organization_id, nombre) VALUES (?, ?)", (organization_id, role_name))
+            if is_postgres():
+                cursor.execute(
+                    "INSERT INTO roles(organization_id, nombre) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                    (organization_id, role_name),
+                )
+            else:
+                # La base SQLite heredada tiene UNIQUE(nombre), no el índice
+                # compuesto usado por PostgreSQL. En la demo reutiliza esos roles.
+                cursor.execute(
+                    "INSERT OR IGNORE INTO roles(organization_id, nombre) VALUES (?, ?)",
+                    (organization_id, role_name),
+                )
         cursor.execute("INSERT INTO organization_invitations(id, organization_id, email, role, token_hash, status, delivery_status, delivery_attempts, invited_by, expires_at) VALUES (?, ?, ?, 'store_admin', ?, 'pending', 'local', 1, ?, datetime('now', '+48 hours'))" if not is_postgres() else "INSERT INTO organization_invitations(id, organization_id, email, role, token_hash, status, delivery_status, delivery_attempts, invited_by) VALUES (?, ?, ?, 'store_admin', ?, 'pending', 'local', 1, ?)", (invitation_id, organization_id, email, token_hash, context.auth_user_id))
     return organization_id, token
 
