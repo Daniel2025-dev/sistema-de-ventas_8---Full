@@ -7,6 +7,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from tenant_context import TenantContext
 
 import flet as ft
 
@@ -374,6 +375,7 @@ class SimpleCrudModule:
         id_field: str = "id",
         delete_pin: str | None = None,
         page_size: int = 12,
+        context: TenantContext | None = None,
     ) -> None:
         self.page = page
         self.title = title
@@ -384,6 +386,8 @@ class SimpleCrudModule:
         self.id_field = id_field
         self.delete_pin = delete_pin
         self.page_size = page_size
+        self.context = context
+        self.organization_id = context.require_organization() if context else None
         self.current_page = 0
         self.selected_id: int | None = None
         self.form_controls = self._build_form_controls()
@@ -453,9 +457,12 @@ class SimpleCrudModule:
         search_text = (self.search.value or "").strip()
         query = f"SELECT * FROM {self.table_name}"
         params: tuple[Any, ...] = ()
+        if self.organization_id:
+            query += " WHERE organization_id=?"
+            params = (self.organization_id,)
         if search_text:
-            query += f" WHERE {self.search_field} LIKE ?"
-            params = (f"%{search_text}%",)
+            query += f" {'AND' if self.organization_id else 'WHERE'} {self.search_field} LIKE ?"
+            params += (f"%{search_text}%",)
         return query, params
 
     def _count_rows(self) -> int:
@@ -527,8 +534,12 @@ class SimpleCrudModule:
         if not self.validate():
             return
         values = [self._field_value(field) for field in self.fields]
-        columns = ", ".join(field.name for field in self.fields)
-        placeholders = ", ".join("?" for _ in self.fields)
+        field_names = [field.name for field in self.fields]
+        if self.organization_id:
+            field_names.insert(0, "organization_id")
+            values.insert(0, self.organization_id)
+        columns = ", ".join(field_names)
+        placeholders = ", ".join("?" for _ in field_names)
         try:
             if self.selected_id is None:
                 execute(
@@ -539,8 +550,8 @@ class SimpleCrudModule:
             else:
                 set_clause = ", ".join(f"{field.name}=?" for field in self.fields)
                 execute(
-                    f"UPDATE {self.table_name} SET {set_clause} WHERE {self.id_field}=?",
-                    tuple(values) + (self.selected_id,),
+                    f"UPDATE {self.table_name} SET {set_clause} WHERE {self.id_field}=?" + (" AND organization_id=?" if self.organization_id else ""),
+                    tuple(values[-len(self.fields):]) + (self.selected_id,) + ((self.organization_id,) if self.organization_id else ()),
                 )
                 self._notify("Registro actualizado correctamente.")
         except Exception as error:
@@ -558,8 +569,8 @@ class SimpleCrudModule:
             return
         try:
             execute(
-                f"DELETE FROM {self.table_name} WHERE {self.id_field}=?",
-                (self.selected_id,),
+                f"DELETE FROM {self.table_name} WHERE {self.id_field}=?" + (" AND organization_id=?" if self.organization_id else ""),
+                (self.selected_id,) + ((self.organization_id,) if self.organization_id else ()),
             )
         except Exception as error:
             self._notify(f"No se pudo eliminar el registro: {error}", error=True)
@@ -704,6 +715,60 @@ def ensure_app_schema() -> None:
         return
     with get_connection() as connection:
         cursor = connection.cursor()
+        default_org = "00000000-0000-0000-0000-000000000001"
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT DEFAULT 'active', created_by TEXT)"
+        )
+        cursor.execute(
+            "INSERT OR IGNORE INTO organizations(id, name) VALUES (?, 'Empresa principal')",
+            (default_org,),
+        )
+        tenant_tables = [
+            "empresa", "usuarios", "roles", "moneda", "categorias", "sucursal",
+            "impuestos", "clientes", "proveedores", "inventario", "caja", "ventas",
+            "cotizaciones", "pedidos", "gastos",
+        ]
+        for table_name in tenant_tables:
+            columns = {row["name"] for row in fetch_all(f"PRAGMA table_info({table_name})")}
+            if "organization_id" not in columns:
+                cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN organization_id TEXT")
+                cursor.execute(
+                    f"UPDATE {table_name} SET organization_id=? WHERE organization_id IS NULL",
+                    (default_org,),
+                )
+        user_columns = {row["name"] for row in fetch_all("PRAGMA table_info(usuarios)")}
+        for column_name, sql_type in (("auth_user_id", "TEXT"), ("email", "TEXT"), ("activo", "INTEGER DEFAULT 1")):
+            if column_name not in user_columns:
+                cursor.execute(f"ALTER TABLE usuarios ADD COLUMN {column_name} {sql_type}")
+        cursor.execute(
+            """CREATE TABLE IF NOT EXISTS organization_memberships (
+                id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, auth_user_id TEXT,
+                email TEXT NOT NULL, username TEXT NOT NULL DEFAULT '', role TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(organization_id, email), UNIQUE(organization_id, auth_user_id))"""
+        )
+        cursor.execute(
+            """CREATE TABLE IF NOT EXISTS organization_invitations (
+                id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, email TEXT NOT NULL,
+                role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, status TEXT DEFAULT 'pending',
+                delivery_status TEXT DEFAULT 'local', delivery_attempts INTEGER DEFAULT 0,
+                invited_by TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT, accepted_at TEXT)"""
+        )
+        cursor.execute("CREATE TABLE IF NOT EXISTS platform_admins (auth_user_id TEXT PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+        cursor.execute(
+            """CREATE TABLE IF NOT EXISTS sale_operations (
+                id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, request_id TEXT NOT NULL,
+                factura INTEGER NOT NULL, caja_id INTEGER NOT NULL, customer_id INTEGER,
+                total REAL NOT NULL, payment_method TEXT NOT NULL, created_by TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(organization_id, request_id), UNIQUE(organization_id, factura))"""
+        )
+        ventas_columns_initial = {row["name"] for row in fetch_all("PRAGMA table_info(ventas)")}
+        if "operation_id" not in ventas_columns_initial:
+            cursor.execute("ALTER TABLE ventas ADD COLUMN operation_id TEXT")
+        if "product_id" not in ventas_columns_initial:
+            cursor.execute("ALTER TABLE ventas ADD COLUMN product_id INTEGER")
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS moneda (
@@ -815,19 +880,21 @@ def ensure_app_schema() -> None:
         connection.commit()
 
 
-@lru_cache(maxsize=1)
-def get_company_info() -> dict[str, str]:
+@lru_cache(maxsize=128)
+def get_company_info(organization_id: str | None = None) -> dict[str, str]:
+    where = " WHERE organization_id=?" if organization_id else ""
     row = fetch_one(
-        "SELECT nombre, direccion, telefono, email, website, image_path, tipo_id, numero_id FROM empresa LIMIT 1"
+        "SELECT nombre, direccion, telefono, email, website, image_path, tipo_id, numero_id FROM empresa" + where + " LIMIT 1",
+        (organization_id,) if organization_id else (),
     )
     image_path = row.get("image_path") if row else DEFAULT_COMPANY_LOGO
     if not image_path:
         image_path = DEFAULT_COMPANY_LOGO
     return {
-        "nombre": row.get("nombre") if row else "Sistema Punto de Venta",
-        "direccion": row.get("direccion") if row else "Región Metropolitana",
-        "telefono": row.get("telefono") if row else "+56 9 0000 0000",
-        "email": row.get("email") if row else "contacto@example.com",
+        "nombre": (row.get("nombre") if row else None) or "Mi negocio",
+        "direccion": (row.get("direccion") if row else None) or "",
+        "telefono": (row.get("telefono") if row else None) or "",
+        "email": (row.get("email") if row else None) or "",
         "website": row.get("website") if row else "",
         "image_path": image_path,
         "tipo_id": row.get("tipo_id") if row else "",
@@ -835,9 +902,13 @@ def get_company_info() -> dict[str, str]:
     }
 
 
-@lru_cache(maxsize=1)
-def get_currency_symbol() -> str:
-    return fetch_scalar("SELECT simbolo FROM moneda ORDER BY id LIMIT 1", default="$")
+@lru_cache(maxsize=128)
+def get_currency_symbol(organization_id: str | None = None) -> str:
+    where = " WHERE organization_id=?" if organization_id else ""
+    return fetch_scalar(
+        "SELECT simbolo FROM moneda" + where + " ORDER BY id LIMIT 1",
+        (organization_id,) if organization_id else (), default="$",
+    )
 
 
 def invalidate_reference_caches() -> None:

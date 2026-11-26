@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from tenant_context import TenantContext
+
 try:
     from dotenv import load_dotenv
 
@@ -139,7 +141,7 @@ def _postgres_pool() -> Any:
     return _pool
 
 
-def connect() -> ConnectionAdapter:
+def connect(context: TenantContext | None = None) -> ConnectionAdapter:
     if is_postgres():
         try:
             import psycopg
@@ -150,7 +152,22 @@ def connect() -> ConnectionAdapter:
             ) from error
         pool = _postgres_pool()
         connection = pool.getconn(timeout=15)
-        return ConnectionAdapter(connection, True, pool.putconn)
+        adapter = ConnectionAdapter(connection, True, pool.putconn)
+        if context:
+            # SET LOCAL is transaction scoped: a pooled connection cannot leak the
+            # previous request's tenant to the next checkout.
+            cursor = adapter.cursor()
+            cursor.execute(
+                "SELECT set_config('app.organization_id', ?, true), "
+                "set_config('app.auth_user_id', ?, true), "
+                "set_config('app.is_platform_admin', ?, true)",
+                (
+                    context.organization_id or "",
+                    context.auth_user_id,
+                    "true" if context.is_platform_admin else "false",
+                ),
+            )
+        return adapter
 
     connection = sqlite3.connect(SQLITE_PATH)
     connection.row_factory = sqlite3.Row
@@ -164,30 +181,30 @@ def rows_as_dicts(cursor: CursorAdapter, rows: list[Any]) -> list[dict[str, Any]
     return [dict(row) for row in rows]
 
 
-def fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-    with connect() as connection:
+def fetch_all(query: str, params: tuple[Any, ...] = (), context: TenantContext | None = None) -> list[dict[str, Any]]:
+    with connect(context) as connection:
         cursor = connection.cursor().execute(query, params)
         return rows_as_dicts(cursor, cursor.fetchall())
 
 
-def fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
-    rows = fetch_all(query, params)
+def fetch_one(query: str, params: tuple[Any, ...] = (), context: TenantContext | None = None) -> dict[str, Any] | None:
+    rows = fetch_all(query, params, context)
     return rows[0] if rows else None
 
 
-def fetch_scalar(query: str, params: tuple[Any, ...] = (), default: Any = None) -> Any:
-    row = fetch_one(query, params)
+def fetch_scalar(query: str, params: tuple[Any, ...] = (), default: Any = None, context: TenantContext | None = None) -> Any:
+    row = fetch_one(query, params, context)
     return next(iter(row.values())) if row else default
 
 
-def execute(query: str, params: tuple[Any, ...] = ()) -> None:
-    with connect() as connection:
+def execute(query: str, params: tuple[Any, ...] = (), context: TenantContext | None = None) -> None:
+    with connect(context) as connection:
         connection.cursor().execute(query, params)
 
 
 @contextmanager
-def transaction() -> Iterator[CursorAdapter]:
-    connection = connect()
+def transaction(context: TenantContext | None = None) -> Iterator[CursorAdapter]:
+    connection = connect(context)
     cursor = connection.cursor()
     try:
         yield cursor
@@ -205,16 +222,18 @@ def validate_identifier(value: str) -> str:
     return value
 
 
-def next_document_number(document: str) -> int:
+def next_document_number(document: str, organization_id: str | None = None) -> int:
     """Preview the next number without consuming it."""
     if document not in {"factura", "cotizacion"}:
         raise ValueError("Tipo de documento no permitido")
     column = "factura" if document == "factura" else "cotizacion"
     table = "ventas" if document == "factura" else "cotizaciones"
-    return int(fetch_scalar(f"SELECT COALESCE(MAX({column}), 0) + 1 FROM {table}", default=1))
+    where = " WHERE organization_id=?" if organization_id else ""
+    params = (organization_id,) if organization_id else ()
+    return int(fetch_scalar(f"SELECT COALESCE(MAX({column}), 0) + 1 FROM {table}{where}", params, default=1))
 
 
-def reserve_document_number(cursor: CursorAdapter, document: str) -> int:
+def reserve_document_number(cursor: CursorAdapter, document: str, organization_id: str | None = None) -> int:
     """Reserve a number only while the final sale/quote transaction is running."""
     if document not in {"factura", "cotizacion"}:
         raise ValueError("Tipo de documento no permitido")
@@ -222,9 +241,14 @@ def reserve_document_number(cursor: CursorAdapter, document: str) -> int:
     table = "ventas" if document == "factura" else "cotizaciones"
     if is_postgres():
         # Serialize cashiers for the few milliseconds used to allocate a number.
-        lock_id = 42001 if document == "factura" else 42002
-        cursor.execute("SELECT pg_advisory_xact_lock(?)", (lock_id,))
-    cursor.execute(f"SELECT COALESCE(MAX({column}), 0) + 1 AS numero FROM {table}")
+        namespace = 42001 if document == "factura" else 42002
+        if organization_id:
+            cursor.execute("SELECT pg_advisory_xact_lock(?, hashtext(?))", (namespace, organization_id))
+        else:
+            cursor.execute("SELECT pg_advisory_xact_lock(?)", (namespace,))
+    where = " WHERE organization_id=?" if organization_id else ""
+    params = (organization_id,) if organization_id else ()
+    cursor.execute(f"SELECT COALESCE(MAX({column}), 0) + 1 AS numero FROM {table}{where}", params)
     row = cursor.fetchone()
     if row is None:
         return 1

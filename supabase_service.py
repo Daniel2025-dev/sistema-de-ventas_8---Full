@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from database import fetch_one
+from database import fetch_one, transaction
+from tenant_context import PLATFORM_ADMIN, TenantContext
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,15 @@ class AuthIdentity:
     username: str
     role: str
     access_token: str
+    organization_id: str | None
+    is_platform_admin: bool = False
+
+    def tenant_context(self) -> TenantContext:
+        return TenantContext(
+            auth_user_id=self.user_id, email=self.email, username=self.username,
+            organization_id=self.organization_id, role=self.role,
+            is_platform_admin=self.is_platform_admin,
+        )
 
 
 def supabase_url() -> str:
@@ -51,23 +62,64 @@ def sign_in(email: str, password: str) -> AuthIdentity:
     if not response.user or not response.session:
         raise RuntimeError("No se recibió una sesión válida")
 
-    profile = fetch_one(
-        "SELECT username, rol, activo FROM usuarios WHERE auth_user_id = ?",
+    platform_admin = fetch_one(
+        "SELECT auth_user_id FROM platform_admins WHERE auth_user_id=?",
         (str(response.user.id),),
     )
-    if not profile:
-        raise PermissionError("El usuario no tiene un perfil habilitado en el sistema")
-    if not profile.get("activo", True):
-        raise PermissionError("El usuario está desactivado")
-
-    username = str(profile.get("username") or response.user.email or "usuario")
-    return AuthIdentity(
-        user_id=str(response.user.id),
-        email=str(response.user.email or email),
-        username=username,
-        role=str(profile.get("rol") or "Vendedor"),
-        access_token=str(response.session.access_token),
+    auth_probe = TenantContext(
+        auth_user_id=str(response.user.id), email=str(response.user.email or email),
+        username="", organization_id=None, role="cashier",
     )
+    membership = fetch_one(
+        """SELECT organization_id, username, role, status
+           FROM organization_memberships
+           WHERE auth_user_id=? AND status='active'
+           ORDER BY created_at LIMIT 1""",
+        (str(response.user.id),), context=auth_probe,
+    )
+    if not platform_admin and not membership:
+        raise PermissionError("El usuario no tiene una membresía activa")
+
+    username = str((membership or {}).get("username") or response.user.email or "usuario")
+    return AuthIdentity(
+        user_id=str(response.user.id), email=str(response.user.email or email),
+        username=username,
+        role=PLATFORM_ADMIN if platform_admin else str(membership["role"]),
+        access_token=str(response.session.access_token),
+        organization_id=str(membership["organization_id"]) if membership else None,
+        is_platform_admin=bool(platform_admin),
+    )
+
+
+def accept_invitation(token: str, auth_user_id: str, authenticated_email: str) -> str:
+    """Bind an authenticated Supabase user to exactly the invited store."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    email = authenticated_email.strip().casefold()
+    probe = TenantContext(auth_user_id, email, "", None, "cashier")
+    row = fetch_one(
+        "SELECT private.accept_organization_invitation(?, ?, ?) AS organization_id",
+        (token_hash, auth_user_id, email), context=probe,
+    )
+    if not row or not row.get("organization_id"):
+        raise PermissionError("La invitación no es válida para este correo")
+    return str(row["organization_id"])
+
+
+def register_from_invitation(token: str, email: str, password: str) -> str:
+    if len(password) < 8:
+        raise ValueError("La contraseña debe tener al menos 8 caracteres")
+    response = _client().auth.sign_up({"email": email.strip(), "password": password})
+    if not response.user:
+        raise RuntimeError("Supabase no creó el usuario")
+    return accept_invitation(token.strip(), str(response.user.id), email)
+
+
+def request_password_recovery(email: str) -> None:
+    if not supabase_enabled():
+        raise RuntimeError("Supabase Auth no está configurado")
+    redirect = os.getenv("PUBLIC_APP_URL", "").strip() or None
+    options = {"redirect_to": redirect} if redirect else None
+    _client().auth.reset_password_for_email(email.strip(), options=options)
 
 
 def admin_create_user(email: str, password: str, username: str, role: str) -> str:

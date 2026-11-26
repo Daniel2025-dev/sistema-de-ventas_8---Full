@@ -25,6 +25,7 @@ from flet_utils import (
     shell_card,
 )
 from supabase_service import upload_public_bytes
+from tenant_context import TenantContext
 
 
 class Configuracion:
@@ -32,10 +33,13 @@ class Configuracion:
         self,
         page: ft.Page,
         user: str | None = None,
+        context: TenantContext | None = None,
         on_company_updated: Callable[[], None] | None = None,
     ) -> None:
         self.page = page
         self.user = user
+        self.context = context
+        self.organization_id = context.require_organization() if context else None
         self.on_company_updated = on_company_updated
         self.current_section = "empresa"
         self.navigation_container = ft.Container()
@@ -45,7 +49,7 @@ class Configuracion:
         services = getattr(self.page, "services", None)
         if isinstance(services, list) and self.file_picker not in services:
             services.append(self.file_picker)
-        company = get_company_info()
+        company = get_company_info(self.organization_id)
         self.nombre = ft.TextField(label="Nombre empresa", value=company["nombre"], border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
         self.tipo_id = ft.Dropdown(
             label="Tipo de identificacion",
@@ -75,6 +79,7 @@ class Configuracion:
             table_name="categorias",
             search_field="nombre",
             fields=[FieldSpec("nombre", "Nombre")],
+            context=context,
         )
         self.branches = SimpleCrudModule(
             page=page,
@@ -83,6 +88,7 @@ class Configuracion:
             table_name="sucursal",
             search_field="nombre",
             fields=[FieldSpec("nombre", "Nombre")],
+            context=context,
         )
         self.taxes = SimpleCrudModule(
             page=page,
@@ -94,6 +100,7 @@ class Configuracion:
                 FieldSpec("nombre", "Nombre"),
                 FieldSpec("tasa", "Tasa"),
             ],
+            context=context,
         )
         self.currency = SimpleCrudModule(
             page=page,
@@ -105,6 +112,7 @@ class Configuracion:
                 FieldSpec("nombre", "Nombre"),
                 FieldSpec("simbolo", "Simbolo"),
             ],
+            context=context,
         )
 
         self.section_builders = {
@@ -146,23 +154,23 @@ class Configuracion:
             self._notify("Ingrese al menos el nombre de la empresa.", error=True)
             return
 
-        existing = fetch_one("SELECT id FROM empresa LIMIT 1")
+        existing = fetch_one("SELECT id FROM empresa WHERE organization_id=? LIMIT 1", (self.organization_id,)) if self.organization_id else fetch_one("SELECT id FROM empresa LIMIT 1")
         if existing:
             execute(
                 """
                 UPDATE empresa
                 SET nombre=?, direccion=?, telefono=?, email=?, website=?, image_path=?, tipo_id=?, numero_id=?
-                WHERE id=?
+                WHERE id=? AND organization_id=?
                 """,
-                values + (existing["id"],),
+                values + (existing["id"], self.organization_id),
             )
         else:
             execute(
                 """
-                INSERT INTO empresa (id, nombre, direccion, telefono, email, website, image_path, tipo_id, numero_id)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO empresa (organization_id, nombre, direccion, telefono, email, website, image_path, tipo_id, numero_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                values,
+                (self.organization_id,) + values,
             )
         invalidate_reference_caches()
         if self.on_company_updated:
@@ -213,7 +221,7 @@ class Configuracion:
             public_url = upload_public_bytes(
                 prepared,
                 "imagenes",
-                "logos/empresa.png",
+                f"logos/{self.organization_id}/empresa.png",
                 "image/png",
             )
             # Cache-busting makes every connected device display the new logo.

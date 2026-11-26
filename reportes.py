@@ -3,12 +3,14 @@ import datetime
 import flet as ft
 
 from flet_utils import PALETTE, fetch_all, fetch_scalar, page_title, shell_card, stat_card, table_view
+from tenant_context import TenantContext
 
 
 class Reportes:
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.page = page
         self.user = user
+        self.organization_id = context.require_organization() if context else None
         hoy = datetime.date.today().strftime("%Y-%m-%d")
         self.desde = ft.TextField(label="Desde (YYYY-MM-DD)", value=hoy, border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
         self.hasta = ft.TextField(label="Hasta (YYYY-MM-DD)", value=hoy, border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
@@ -40,8 +42,8 @@ class Reportes:
         desde = (self.desde.value or "").strip()
         hasta = (self.hasta.value or "").strip()
         if not desde or not hasta:
-            return "", ()
-        return " WHERE fecha BETWEEN ? AND ? ", (desde, hasta)
+            return " WHERE organization_id=?", (self.organization_id,)
+        return " WHERE organization_id=? AND fecha BETWEEN ? AND ? ", (self.organization_id, desde, hasta)
 
     def refresh(self, _: ft.ControlEvent | None = None) -> None:
         clause, params = self._date_clause()
@@ -56,7 +58,7 @@ class Reportes:
         )
         costo_ventas = float(fetch_scalar(f"SELECT IFNULL(SUM(costo), 0) FROM ventas{clause}", params, default=0))
         total_productos_vendidos = int(fetch_scalar(f"SELECT IFNULL(SUM(cantidad), 0) FROM ventas{clause}", params, default=0))
-        costo_inventario = float(fetch_scalar("SELECT IFNULL(SUM(costo * stock), 0) FROM inventario", default=0))
+        costo_inventario = float(fetch_scalar("SELECT IFNULL(SUM(costo * stock), 0) FROM inventario WHERE organization_id=?", (self.organization_id,), default=0))
 
         self.summary_section.controls = [
             ft.Container(col={"xs": 12, "md": 6, "xl": 2}, content=stat_card("Ventas totales", f"{total_ventas:,.2f}", ft.Icons.PAYMENTS_OUTLINED, "secondary")),
@@ -92,9 +94,10 @@ class Reportes:
             """
             SELECT fecha_apertura, monto_inicial, total_en_caja, estado, total_ventas_acumuladas, fecha_cierre
             FROM caja
+            WHERE organization_id=?
             ORDER BY id DESC
             LIMIT 20
-            """
+            """, (self.organization_id,)
         )
         self.cash_table.rows = [
             ft.DataRow(

@@ -3,13 +3,17 @@ import datetime
 import flet as ft
 
 from flet_utils import FieldSpec, SimpleCrudModule, fetch_all
+from tenant_context import TenantContext
 
 
 class Pedidos(SimpleCrudModule):
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.user = user
-        proveedores = [row["nombre"] for row in fetch_all("SELECT nombre FROM proveedores ORDER BY nombre")]
-        productos = [row["nombre"] for row in fetch_all("SELECT nombre FROM inventario ORDER BY nombre")]
+        organization_id = context.require_organization() if context else None
+        where = " WHERE organization_id=?" if organization_id else ""
+        params = (organization_id,) if organization_id else ()
+        proveedores = [row["nombre"] for row in fetch_all("SELECT nombre FROM proveedores" + where + " ORDER BY nombre", params)]
+        productos = [row["nombre"] for row in fetch_all("SELECT nombre FROM inventario" + where + " ORDER BY nombre", params)]
         super().__init__(
             page=page,
             title="Pedidos",
@@ -28,6 +32,7 @@ class Pedidos(SimpleCrudModule):
                 FieldSpec("fecha_vencimiento", "Fecha vencimiento"),
                 FieldSpec("lote", "Lote"),
             ],
+            context=context,
         )
         now = datetime.datetime.now()
         fecha = self.form_controls["fecha"]

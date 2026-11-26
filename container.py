@@ -18,6 +18,7 @@ from flet_utils import (
     shell_card,
     stat_card,
 )
+from tenant_context import TenantContext
 
 
 class Container:
@@ -26,13 +27,15 @@ class Container:
         page: ft.Page,
         user: str,
         rol: str,
+        context: TenantContext,
         on_logout: Callable[[], None],
     ) -> None:
         self.page = page
         self.user = user
         self.rol = rol
+        self.context = context
         self.on_logout = on_logout
-        self.company = get_company_info()
+        self.company = get_company_info(context.organization_id)
         self.active_module = "dashboard"
         self.view_cache: dict[str, ft.Control] = {}
         self._allowed_modules: set[str] | None = None
@@ -84,7 +87,7 @@ class Container:
         self.rol = rol
 
     def verificar_acceso(self, modulo: str) -> bool:
-        if self.rol == "Administrador":
+        if self.context.can_manage_store:
             return True
         if self._allowed_modules is None:
             rows = fetch_all(
@@ -94,9 +97,9 @@ class Container:
                 JOIN roles r ON LOWER(r.nombre) = LOWER(u.rol)
                 JOIN permisos_rol pr ON pr.id_rol = r.id
                 JOIN permisos p ON p.id = pr.id_permiso
-                WHERE u.username = ?
+                WHERE u.username = ? AND u.organization_id=? AND r.organization_id=?
                 """,
-                (self.user,),
+                (self.user, self.context.require_organization(), self.context.require_organization()),
             )
             self._allowed_modules = {str(row["modulo"]) for row in rows}
         return modulo in self._allowed_modules
@@ -131,11 +134,12 @@ class Container:
         summary = fetch_one(
             """
             SELECT
-                (SELECT COUNT(*) FROM inventario) AS productos,
-                (SELECT COUNT(*) FROM clientes) AS clientes,
-                (SELECT COUNT(*) FROM ventas) AS ventas,
-                (SELECT COALESCE(SUM(valor), 0) FROM gastos) AS gastos
-            """
+                (SELECT COUNT(*) FROM inventario WHERE organization_id=?) AS productos,
+                (SELECT COUNT(*) FROM clientes WHERE organization_id=?) AS clientes,
+                (SELECT COUNT(*) FROM ventas WHERE organization_id=?) AS ventas,
+                (SELECT COALESCE(SUM(valor), 0) FROM gastos WHERE organization_id=?) AS gastos
+            """,
+            (self.context.require_organization(),) * 4,
         ) or {}
         total_productos = summary.get("productos", 0)
         total_clientes = summary.get("clientes", 0)
@@ -293,23 +297,23 @@ class Container:
 
         return {
             "dashboard": self._summary_view,
-            "ventas": lambda: Ventas(self.page, self.user).build(),
-            "cotizaciones": lambda: Cotizaciones(self.page, self.user).build(),
-            "inventario": lambda: Inventario(self.page, self.user).build(),
-            "clientes": lambda: Clientes(self.page).build(),
-            "proveedor": lambda: Proveedor(self.page).build(),
-            "pedidos": lambda: Pedidos(self.page).build(),
-            "reportes": lambda: Reportes(self.page, self.user).build(),
-            "gastos": lambda: Gastos(self.page).build(),
-            "usuarios": lambda: Usuarios(self.page).build(),
-            "informacion": lambda: Informacion(self.page).build(),
+            "ventas": lambda: Ventas(self.page, self.user, self.context).build(),
+            "cotizaciones": lambda: Cotizaciones(self.page, self.user, self.context).build(),
+            "inventario": lambda: Inventario(self.page, self.user, self.context).build(),
+            "clientes": lambda: Clientes(self.page, context=self.context).build(),
+            "proveedor": lambda: Proveedor(self.page, context=self.context).build(),
+            "pedidos": lambda: Pedidos(self.page, context=self.context).build(),
+            "reportes": lambda: Reportes(self.page, self.user, self.context).build(),
+            "gastos": lambda: Gastos(self.page, context=self.context).build(),
+            "usuarios": lambda: Usuarios(self.page, context=self.context).build(),
+            "informacion": lambda: Informacion(self.page, context=self.context).build(),
             "configuracion": lambda: Configuracion(
-                self.page, on_company_updated=self._company_updated
+                self.page, context=self.context, on_company_updated=self._company_updated
             ).build(),
         }
 
     def _company_updated(self) -> None:
-        self.company = get_company_info()
+        self.company = get_company_info(self.context.organization_id)
         self.view_cache.pop("dashboard", None)
 
     def _render_content(self) -> None:

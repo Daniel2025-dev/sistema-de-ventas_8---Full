@@ -17,11 +17,14 @@ from flet_utils import (
     table_view,
 )
 from supabase_service import admin_create_user, admin_delete_user, admin_update_user, supabase_enabled
+from tenant_context import TenantContext
+from pos_service import create_local_invitation
 
 
 class Usuarios(SimpleCrudModule):
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.user = user
+        self.context = context
         fields = [
             FieldSpec("username", "Usuario"),
             FieldSpec("password", "Contrasena", password=True),
@@ -41,6 +44,7 @@ class Usuarios(SimpleCrudModule):
             table_name="usuarios",
             search_field="username",
             fields=fields,
+            context=context,
         )
         if supabase_enabled():
             password_control = self.form_controls["password"]
@@ -58,10 +62,8 @@ class Usuarios(SimpleCrudModule):
         if not supabase_enabled():
             return super().validate()
         required = ["email", "username", "rol"]
-        if self.selected_id is None:
-            required.append("password")
         if any(not (self.form_controls[name].value or "").strip() for name in required):
-            self._notify("Complete correo, usuario, rol y la contraseña para usuarios nuevos.", error=True)
+            self._notify("Complete correo, usuario y rol.", error=True)
             return False
         password = (self.form_controls["password"].value or "").strip()
         if password and len(password) < 8:
@@ -81,16 +83,17 @@ class Usuarios(SimpleCrudModule):
         role = str(self.form_controls["rol"].value or "Vendedor")
         try:
             if self.selected_id is None:
-                admin_create_user(email, password, username, role)
-                self._notify("Usuario creado en Supabase Auth.")
+                invite_role = "store_admin" if role == "Administrador" else "cashier"
+                token = create_local_invitation(self.context, email, invite_role)
+                self._notify(f"Invitación creada. Modo local: /aceptar-invitacion?token={token}")
             else:
-                profile = fetch_one("SELECT auth_user_id FROM usuarios WHERE id=?", (self.selected_id,))
+                profile = fetch_one("SELECT auth_user_id FROM usuarios WHERE id=? AND organization_id=?", (self.selected_id, self.organization_id))
                 if not profile or not profile.get("auth_user_id"):
                     raise ValueError("El perfil no está vinculado a Supabase Auth")
                 admin_update_user(str(profile["auth_user_id"]), email, password or None)
                 execute(
-                    "UPDATE usuarios SET email=?, username=?, rol=? WHERE id=?",
-                    (email, username, role, self.selected_id),
+                    "UPDATE usuarios SET email=?, username=?, rol=? WHERE id=? AND organization_id=?",
+                    (email, username, role, self.selected_id, self.organization_id),
                 )
                 self._notify("Usuario actualizado.")
         except Exception as error:
@@ -107,7 +110,7 @@ class Usuarios(SimpleCrudModule):
             self._notify("Seleccione un usuario.", error=True)
             return
         try:
-            profile = fetch_one("SELECT auth_user_id FROM usuarios WHERE id=?", (self.selected_id,))
+            profile = fetch_one("SELECT auth_user_id FROM usuarios WHERE id=? AND organization_id=?", (self.selected_id, self.organization_id))
             if not profile or not profile.get("auth_user_id"):
                 raise ValueError("El perfil no está vinculado a Supabase Auth")
             admin_delete_user(str(profile["auth_user_id"]))
@@ -127,7 +130,7 @@ class Usuarios(SimpleCrudModule):
         self.page.update()
 
     def _role_id(self, role_name: str) -> int | None:
-        role = fetch_one("SELECT id FROM roles WHERE nombre = ?", (role_name,))
+        role = fetch_one("SELECT id FROM roles WHERE nombre = ? AND organization_id=?", (role_name, self.organization_id))
         return int(role["id"]) if role else None
 
     def _current_modules_for_role(self, role_name: str) -> set[str]:

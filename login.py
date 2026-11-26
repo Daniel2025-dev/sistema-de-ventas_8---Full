@@ -2,8 +2,9 @@ from typing import Callable
 
 import flet as ft
 
-from flet_utils import DB_NAME, DEFAULT_COMPANY_LOGO, PALETTE, execute, fetch_one, get_company_info, image_base64, shell_card
-from supabase_service import sign_in, supabase_enabled
+from flet_utils import DB_NAME, PALETTE, execute, fetch_one, image_base64, shell_card
+from supabase_service import register_from_invitation, request_password_recovery, sign_in, supabase_enabled
+from tenant_context import TenantContext
 
 
 class Login:
@@ -12,13 +13,12 @@ class Login:
     def __init__(
         self,
         page: ft.Page,
-        on_success: Callable[[str, str], None],
+        on_success: Callable[[TenantContext], None],
         on_register: Callable[[], None],
     ) -> None:
         self.page = page
         self.on_success = on_success
         self.on_register = on_register
-        self.company = get_company_info()
         self.username = ft.TextField(
             label="Correo electrónico" if supabase_enabled() else "Nombre de usuario",
             border_radius=16,
@@ -59,7 +59,7 @@ class Login:
         try:
             if supabase_enabled():
                 identity = sign_in(user, password)
-                username, rol = identity.username, identity.role
+                context = identity.tenant_context()
             else:
                 result = fetch_one(
                     "SELECT rol FROM usuarios WHERE username=? AND password=?",
@@ -67,7 +67,12 @@ class Login:
                 )
                 if not result:
                     raise PermissionError("Usuario y/o contraseña incorrecta")
-                username, rol = user, str(result["rol"])
+                profile = fetch_one("SELECT organization_id FROM usuarios WHERE username=?", (user,)) or {}
+                context = TenantContext(
+                    auth_user_id=f"local:{user}", email="", username=user,
+                    organization_id=str(profile.get("organization_id") or "00000000-0000-0000-0000-000000000001"),
+                    role="store_admin" if str(result["rol"]).lower() == "administrador" else "cashier",
+                )
         except Exception as error:
             self.username.value = ""
             self.password.value = ""
@@ -78,10 +83,9 @@ class Login:
         self.password.value = ""
         self.page.update()
         self._notify("Ingreso correcto.")
-        self.on_success(username, rol)
+        self.on_success(context)
 
     def _hero_panel(self) -> ft.Control:
-        logo = image_base64(self.company["image_path"], DEFAULT_COMPANY_LOGO)
         return shell_card(
             ft.Column(
                 [
@@ -90,38 +94,13 @@ class Login:
                         height=260,
                         border_radius=8,
                         alignment=ft.Alignment(0, 0),
-                        content=ft.Image(
-                            src=logo,
-                            width=300,
-                            height=260,
-                            fit="contain",
-                        )
-                        if logo
-                        else ft.Icon(ft.Icons.STOREFRONT, size=90),
+                        content=ft.Icon(ft.Icons.POINT_OF_SALE_ROUNDED, size=90),
                     ),
                     ft.Text(
-                        self.company["nombre"],
+                        "Sistema de Punto de Venta",
                         size=28,
                         weight=ft.FontWeight.BOLD,
                         color=PALETTE["text"],
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    ft.Text(
-                        self.company["direccion"],
-                        size=14,
-                        color=PALETTE["muted"],
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    ft.Text(
-                        self.company["telefono"],
-                        size=14,
-                        color=PALETTE["muted"],
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    ft.Text(
-                        self.company["email"],
-                        size=14,
-                        color=PALETTE["muted"],
                         text_align=ft.TextAlign.CENTER,
                     ),
                     ft.Container(height=12),
@@ -180,6 +159,18 @@ class Login:
                         on_click=lambda _: self.on_register(),
                         visible=not supabase_enabled(),
                     ),
+                    ft.OutlinedButton(
+                        "Aceptar invitación",
+                        icon=ft.Icons.MARK_EMAIL_READ_OUTLINED,
+                        height=50,
+                        on_click=self._show_invitation_dialog,
+                        visible=supabase_enabled(),
+                    ),
+                    ft.TextButton(
+                        "Recuperar contraseña",
+                        on_click=self._recover_password,
+                        visible=supabase_enabled(),
+                    ),
                     ft.Container(height=10),
                     ft.Text(
                         "Version 1.1.1",
@@ -193,6 +184,42 @@ class Login:
             padding=32,
             expand=True,
         )
+
+    def _recover_password(self, _: ft.ControlEvent | None = None) -> None:
+        email = (self.username.value or "").strip()
+        if "@" not in email:
+            self._notify("Escriba su correo en el campo de inicio de sesión.", error=True)
+            return
+        try:
+            request_password_recovery(email)
+            self._notify("Supabase envió el enlace de recuperación si el correo existe.")
+        except Exception as error:
+            self._notify(f"No fue posible solicitar la recuperación: {error}", error=True)
+
+    def _show_invitation_dialog(self, _: ft.ControlEvent | None = None) -> None:
+        token = ft.TextField(label="Token de invitación")
+        email = ft.TextField(label="Correo invitado")
+        password = ft.TextField(label="Nueva contraseña", password=True, can_reveal_password=True)
+
+        def accept(_event: ft.ControlEvent) -> None:
+            try:
+                register_from_invitation(token.value or "", email.value or "", password.value or "")
+                dialog.open = False
+                self.username.value = email.value
+                self._notify("Invitación aceptada. Confirme su correo si Supabase se lo solicita y luego inicie sesión.")
+            except Exception as error:
+                self._notify(f"No fue posible aceptar la invitación: {error}", error=True)
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Aceptar invitación al almacén"),
+            content=ft.Column([token, email, password], tight=True, width=460),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: setattr(dialog, "open", False)),
+                ft.ElevatedButton("Crear mi cuenta", on_click=accept),
+            ],
+        )
+        self.page.show_dialog(dialog)
 
     def build(self) -> ft.Control:
         gradient = ft.LinearGradient(

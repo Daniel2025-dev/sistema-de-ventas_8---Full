@@ -1,13 +1,14 @@
 import flet as ft
 
 from flet_utils import DEFAULT_COMPANY_LOGO, PALETTE, get_company_info, image_base64, page_title, shell_card
+from tenant_context import TenantContext
 
 
 class Informacion:
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.page = page
         self.user = user
-        self.company = get_company_info()
+        self.company = get_company_info(context.organization_id if context else None)
 
     def build(self) -> ft.Control:
         company_logo = image_base64(self.company["image_path"], DEFAULT_COMPANY_LOGO)

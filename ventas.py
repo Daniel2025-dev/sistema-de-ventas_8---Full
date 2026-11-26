@@ -2,6 +2,7 @@ import datetime
 import os
 import subprocess
 import sys
+import uuid
 from collections import defaultdict
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from database import next_document_number, reserve_document_number, transaction
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from supabase_service import supabase_enabled, upload_private_file
+from tenant_context import TenantContext
 
 from flet_utils import (
     DB_NAME,
@@ -35,10 +37,13 @@ from flet_utils import (
 class Ventas:
     db_name = DB_NAME
 
-    def __init__(self, page: ft.Page, user: str | None = None) -> None:
+    def __init__(self, page: ft.Page, user: str | None = None, context: TenantContext | None = None) -> None:
         self.page = page
         self.user = user or "Sistema"
-        self.currency = get_currency_symbol()
+        self.context = context
+        self.organization_id = context.require_organization() if context else None
+        self.sale_request_id = str(uuid.uuid4())
+        self.currency = get_currency_symbol(self.organization_id)
         self.cart: list[dict] = []
         self.product_lookup_by_name: dict[str, dict] = {}
         self.product_lookup_by_code: dict[str, dict] = {}
@@ -139,7 +144,7 @@ class Ventas:
         self.page.update()
 
     def obtener_numero_factura_actual(self) -> int:
-        return next_document_number("factura")
+        return next_document_number("factura", self.organization_id)
 
     @staticmethod
     def _normalize_code(value: object) -> str:
@@ -183,15 +188,15 @@ class Ventas:
             self.page.run_task(self._focus_quantity_input)
 
     def load_clients(self) -> None:
-        rows = fetch_all("SELECT nombre FROM clientes ORDER BY nombre")
+        rows = fetch_all("SELECT nombre FROM clientes WHERE organization_id=? ORDER BY nombre", (self.organization_id,))
         if not rows:
             execute(
                 """
-                INSERT INTO clientes (nombre, tipo_id, cedula, celular, direccion, correo)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO clientes (organization_id, nombre, tipo_id, cedula, celular, direccion, correo)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    "Cliente Mostrador",
+                    self.organization_id, "Cliente Mostrador",
                     "CC",
                     "0",
                     "0",
@@ -218,8 +223,7 @@ class Ventas:
 
         row = fetch_one(
             """
-            SELECT nombre
-            FROM clientes
+            SELECT nombre FROM clientes WHERE organization_id=?
             ORDER BY
                 CASE
                     WHEN LOWER(nombre) LIKE '%mostrador%' THEN 0
@@ -229,14 +233,14 @@ class Ventas:
                 nombre
             LIMIT 1
             """
-        )
+        , (self.organization_id,))
         if not row:
             execute(
                 """
-                INSERT INTO clientes (nombre, tipo_id, cedula, celular, direccion, correo)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO clientes (organization_id, nombre, tipo_id, cedula, celular, direccion, correo)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("Cliente Mostrador", "CC", 0, 0, "Venta rapida", "sin_correo@local"),
+                (self.organization_id, "Cliente Mostrador", "CC", 0, 0, "Venta rapida", "sin_correo@local"),
             )
             row = {"nombre": "Cliente Mostrador"}
             self.load_clients()
@@ -247,15 +251,16 @@ class Ventas:
     def load_products(self) -> None:
         rows = fetch_all(
             """
-            SELECT inventario.nombre, inventario.codigo, inventario.codigo_barras,
+            SELECT inventario.id, inventario.nombre, inventario.codigo, inventario.codigo_barras,
                    inventario.precio, inventario.costo, inventario.stock,
                    inventario.impuesto_id, inventario.estado,
                    inventario.fecha_vencimiento, inventario.lote,
                    COALESCE(impuestos.tasa, 0) AS tasa_impuesto
             FROM inventario
-            LEFT JOIN impuestos ON impuestos.id = inventario.impuesto_id
+            LEFT JOIN impuestos ON impuestos.id = inventario.impuesto_id AND impuestos.organization_id=inventario.organization_id
+            WHERE inventario.organization_id=?
             ORDER BY inventario.nombre
-            """
+            """, (self.organization_id,)
         )
         self.product_lookup_by_name = {}
         self.product_lookup_by_code = {}
@@ -405,6 +410,7 @@ class Ventas:
             self.cart.append(
                 {
                     "factura": self.numero_factura,
+                    "product_id": product["id"],
                     "cliente": cliente,
                     "producto": product_name,
                     "fecha_vencimiento": product.get("fecha_vencimiento") or "",
@@ -501,7 +507,7 @@ class Ventas:
         cantidad = ft.TextField(label="Cantidad", value="1", border_radius=14)
         precio = ft.TextField(label="Precio", border_radius=14)
         costo = ft.TextField(label="Costo", border_radius=14)
-        impuestos = fetch_all("SELECT nombre, tasa FROM impuestos ORDER BY nombre")
+        impuestos = fetch_all("SELECT nombre, tasa FROM impuestos WHERE organization_id=? ORDER BY nombre", (self.organization_id,))
         impuesto = ft.Dropdown(
             label="Impuesto",
             border_radius=14,
@@ -679,7 +685,7 @@ class Ventas:
         self.page.update()
 
     def abrir_caja(self, _: ft.ControlEvent | None = None) -> None:
-        abierta = fetch_scalar("SELECT COUNT(*) FROM caja WHERE estado='abierta'", default=0)
+        abierta = fetch_scalar("SELECT COUNT(*) FROM caja WHERE estado='abierta' AND organization_id=?", (self.organization_id,), default=0)
         if abierta:
             self._notify("Ya existe una caja abierta.", error=True)
             return
@@ -693,8 +699,8 @@ class Ventas:
                 self._notify("Monto inicial invalido.", error=True)
                 return
             execute(
-                "INSERT INTO caja (fecha_apertura, monto_inicial, total_en_caja, estado) VALUES (?, ?, ?, ?)",
-                (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), monto_inicial, monto_inicial, "abierta"),
+                "INSERT INTO caja (organization_id, fecha_apertura, monto_inicial, total_en_caja, estado) VALUES (?, ?, ?, ?, ?)",
+                (self.organization_id, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), monto_inicial, monto_inicial, "abierta"),
             )
             close_dialog(self.page, dialog)
             self.cargar_estado_caja()
@@ -713,14 +719,14 @@ class Ventas:
 
     def cerrar_caja(self, _: ft.ControlEvent | None = None) -> None:
         caja = fetch_one(
-            "SELECT id, monto_inicial, total_en_caja, total_ventas_acumuladas FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1"
+            "SELECT id, monto_inicial, total_en_caja, total_ventas_acumuladas FROM caja WHERE estado='abierta' AND organization_id=? ORDER BY id DESC LIMIT 1", (self.organization_id,)
         )
         if not caja:
             self._notify("La caja no esta abierta.", error=True)
             return
         execute(
-            "UPDATE caja SET estado='cerrada', fecha_cierre=? WHERE id=?",
-            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), caja["id"]),
+            "UPDATE caja SET estado='cerrada', fecha_cierre=? WHERE id=? AND organization_id=?",
+            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), caja["id"], self.organization_id),
         )
         self.caja_abierta = False
         resumen = (
@@ -734,7 +740,7 @@ class Ventas:
 
     def cargar_estado_caja(self) -> None:
         caja = fetch_one(
-            "SELECT estado, total_ventas_acumuladas FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1"
+            "SELECT estado, total_ventas_acumuladas FROM caja WHERE estado='abierta' AND organization_id=? ORDER BY id DESC LIMIT 1", (self.organization_id,)
         )
         self.caja_abierta = caja is not None
         self.monto_total_ventas = float(caja["total_ventas_acumuladas"]) if caja else 0.0
@@ -818,11 +824,26 @@ class Ventas:
         total_impuesto = sum(item["impuesto"] for item in self.cart)
         factura_cobrada = 0
 
-        with transaction() as cursor:
-            factura_cobrada = reserve_document_number(cursor, "factura")
+        with transaction(self.context) as cursor:
+            cursor.execute("SELECT factura FROM sale_operations WHERE organization_id=? AND request_id=?", (self.organization_id, self.sale_request_id))
+            replay = cursor.fetchone()
+            if replay:
+                factura_cobrada = int(replay["factura"])
+                if dialog:
+                    close_dialog(self.page, dialog)
+                self._notify(f"La venta #{factura_cobrada} ya había sido registrada; no se volvió a cobrar.")
+                return
+            else:
+                cursor.execute("SELECT id FROM caja WHERE organization_id=? AND estado='abierta' ORDER BY id DESC LIMIT 1 FOR UPDATE", (self.organization_id,))
+                caja = cursor.fetchone()
+                if not caja:
+                    raise ValueError("La caja no está abierta para este almacén")
+                factura_cobrada = reserve_document_number(cursor, "factura", self.organization_id)
+                operation_id = str(uuid.uuid4())
+                cursor.execute("INSERT INTO sale_operations (id, organization_id, request_id, factura, caja_id, total, payment_method, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (operation_id, self.organization_id, self.sale_request_id, factura_cobrada, caja["id"], total_venta, metodo_pago, self.context.auth_user_id))
             sale_rows = [
                 (
-                    factura_cobrada,
+                    self.organization_id, operation_id, item.get("product_id"), factura_cobrada,
                     item["cliente"],
                     item["producto"],
                     item["precio"],
@@ -842,19 +863,19 @@ class Ventas:
             cursor.executemany(
                 """
                 INSERT INTO ventas
-                (factura, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, medio_pago, impuesto, fecha_vencimiento, lote)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (organization_id, operation_id, product_id, factura, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, medio_pago, impuesto, fecha_vencimiento, lote)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 sale_rows,
             )
             stock_rows = [
-                (item["cantidad"], item["producto"], item["cantidad"])
+                (item["cantidad"], item["product_id"], self.organization_id, item["cantidad"])
                 for item in self.cart
                 if not item["manual"]
             ]
             if stock_rows:
                 cursor.executemany(
-                    "UPDATE inventario SET stock = stock - ? WHERE nombre = ? AND stock >= ?",
+                    "UPDATE inventario SET stock = stock - ? WHERE id = ? AND organization_id=? AND stock >= ?",
                     stock_rows,
                 )
                 if cursor.rowcount != len(stock_rows):
@@ -867,9 +888,9 @@ class Ventas:
                     total_ventas_acumuladas=COALESCE(total_ventas_acumuladas, 0) + ?,
                     impuesto=COALESCE(impuesto, 0) + ?,
                     descuento=COALESCE(descuento, 0) + ?
-                WHERE id=(SELECT id FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1)
+                WHERE id=? AND organization_id=?
                 """,
-                (total_venta, total_venta, total_impuesto, descuento_valor),
+                (total_venta, total_venta, total_impuesto, descuento_valor, caja["id"], self.organization_id),
                 )
 
         cambio = monto_pagado - total_venta
@@ -885,6 +906,7 @@ class Ventas:
                     0, int(product["stock"]) - int(item["cantidad"])
                 )
         self.cart.clear()
+        self.sale_request_id = str(uuid.uuid4())
         self.selected_cart_index = None
         self.numero_factura = self.obtener_numero_factura_actual()
         self.selected_invoice = factura_cobrada
@@ -1105,9 +1127,9 @@ class Ventas:
         detalles = fetch_all(
             """
             SELECT factura, cliente, producto, precio, cantidad, total, fecha, hora, cajero, medio_pago, impuesto, fecha_vencimiento, lote
-            FROM ventas WHERE factura=? ORDER BY rowid
+            FROM ventas WHERE factura=? AND organization_id=? ORDER BY rowid
             """,
-            (self.selected_invoice,),
+            (self.selected_invoice, self.organization_id),
         )
         if not detalles:
             dialog = ft.AlertDialog(
@@ -1119,7 +1141,7 @@ class Ventas:
             show_dialog(self.page, dialog)
             return
 
-        company = get_company_info()
+        company = get_company_info(self.organization_id)
         total = sum(float(row["total"] or 0) for row in detalles)
         impuesto = sum(float(row["impuesto"] or 0) for row in detalles)
         cliente = str(detalles[0]["cliente"] or "")
@@ -1207,7 +1229,7 @@ class Ventas:
                 remote_url = upload_private_file(
                     pdf_path,
                     "comprobantes",
-                    f"ventas/Voucher_{self.selected_invoice}.pdf",
+                    f"ventas/{self.organization_id}/Voucher_{self.selected_invoice}.pdf",
                 )
             except Exception as error:
                 self._notify(f"Voucher local creado, pero no se pudo subir: {error}", error=True)
@@ -1216,7 +1238,7 @@ class Ventas:
     def _sales_summary_rows(self) -> list[dict]:
         factura = (self.invoice_filter.value or "").strip()
         cliente = (self.client_filter.value or "").strip().lower()
-        rows = fetch_all("SELECT factura, cliente, total, fecha, hora, cajero FROM ventas ORDER BY factura DESC")
+        rows = fetch_all("SELECT factura, cliente, total, fecha, hora, cajero FROM ventas WHERE organization_id=? ORDER BY factura DESC", (self.organization_id,))
         grouped: dict[int, dict] = defaultdict(lambda: {"cliente": "", "total": 0.0, "fecha": "", "hora": "", "cajero": ""})
         for row in rows:
             if factura and str(row["factura"]) != factura:
@@ -1273,9 +1295,9 @@ class Ventas:
         detalles = fetch_all(
             """
             SELECT factura, cliente, producto, precio, cantidad, total, fecha, hora, costo, cajero, medio_pago, impuesto, fecha_vencimiento, lote
-            FROM ventas WHERE factura=? ORDER BY rowid
+            FROM ventas WHERE factura=? AND organization_id=? ORDER BY rowid
             """,
-            (self.selected_invoice,),
+            (self.selected_invoice, self.organization_id),
         )
         content = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(col)) for col in ["Producto", "Lote", "Vencimiento", "Semaforo", "Precio", "Cantidad", "Impuesto", "Total", "Medio pago"]],
@@ -1310,28 +1332,28 @@ class Ventas:
         if self.selected_invoice is None:
             self._notify("Seleccione una factura para anular.", error=True)
             return
-        detalles = fetch_all("SELECT producto, cantidad, total FROM ventas WHERE factura=?", (self.selected_invoice,))
+        detalles = fetch_all("SELECT product_id, producto, cantidad, total FROM ventas WHERE factura=? AND organization_id=?", (self.selected_invoice, self.organization_id))
         if not detalles:
             self._notify("No se encontro la factura seleccionada.", error=True)
             return
         total_factura = sum(float(row["total"]) for row in detalles)
-        with transaction() as cursor:
+        with transaction(self.context) as cursor:
             for row in detalles:
                 cursor.execute(
-                    "UPDATE inventario SET stock = stock + ? WHERE nombre = ?",
-                    (row["cantidad"], row["producto"]),
+                    "UPDATE inventario SET stock = stock + ? WHERE id = ? AND organization_id=?",
+                    (row["cantidad"], row["product_id"], self.organization_id),
                 )
-            cursor.execute("DELETE FROM ventas WHERE factura=?", (self.selected_invoice,))
-            cursor.execute("SELECT id, total_ventas_acumuladas, total_en_caja FROM caja WHERE estado='abierta' ORDER BY id DESC LIMIT 1")
+            cursor.execute("DELETE FROM ventas WHERE factura=? AND organization_id=?", (self.selected_invoice, self.organization_id))
+            cursor.execute("SELECT id, total_ventas_acumuladas, total_en_caja FROM caja WHERE estado='abierta' AND organization_id=? ORDER BY id DESC LIMIT 1", (self.organization_id,))
             caja_row = cursor.fetchone()
             caja = dict(caja_row) if caja_row else None
             if caja:
                 cursor.execute(
-                "UPDATE caja SET total_ventas_acumuladas=?, total_en_caja=? WHERE id=?",
+                "UPDATE caja SET total_ventas_acumuladas=?, total_en_caja=? WHERE id=? AND organization_id=?",
                 (
                     max(0.0, float(caja["total_ventas_acumuladas"] or 0) - total_factura),
                     max(0.0, float(caja["total_en_caja"] or 0) - total_factura),
-                    caja["id"],
+                    caja["id"], self.organization_id,
                 ),
                 )
         self.selected_invoice = None
