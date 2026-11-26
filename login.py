@@ -2,7 +2,7 @@ from typing import Callable
 
 import flet as ft
 
-from flet_utils import DB_NAME, PALETTE, execute, fetch_one, get_company_info, image_base64, shell_card
+from flet_utils import DB_NAME, DEFAULT_COMPANY_LOGO, PALETTE, execute, fetch_one, get_company_info, image_base64, shell_card
 from supabase_service import register_from_invitation, register_local_from_invitation, request_password_recovery, sign_in, supabase_enabled
 from tenant_context import TenantContext
 
