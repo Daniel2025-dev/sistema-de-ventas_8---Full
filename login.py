@@ -88,6 +88,7 @@ class Login:
         self.on_success(context)
 
     def _hero_panel(self) -> ft.Control:
+        login_logo = image_base64("imagenes/logo_sistema_punto_venta.png")
         return shell_card(
             ft.Column(
                 [
@@ -96,7 +97,14 @@ class Login:
                         height=260,
                         border_radius=8,
                         alignment=ft.Alignment(0, 0),
-                        content=ft.Icon(ft.Icons.POINT_OF_SALE_ROUNDED, size=90),
+                        content=ft.Image(
+                            src=login_logo,
+                            width=260,
+                            height=240,
+                            fit="contain",
+                        ) if login_logo else ft.Icon(
+                            ft.Icons.POINT_OF_SALE_ROUNDED, size=90
+                        ),
                     ),
                     ft.Text(
                         "Sistema de Punto de Venta",
