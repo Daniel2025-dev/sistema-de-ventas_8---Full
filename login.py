@@ -161,13 +161,6 @@ class Login:
                         on_click=lambda _: self.on_register(),
                         visible=not supabase_enabled(),
                     ),
-                    ft.OutlinedButton(
-                        "Aceptar invitación",
-                        icon=ft.Icons.MARK_EMAIL_READ_OUTLINED,
-                        height=50,
-                        on_click=self._show_invitation_dialog,
-                        visible=True,
-                    ),
                     ft.TextButton(
                         "Recuperar contraseña",
                         on_click=self._recover_password,

@@ -18,7 +18,6 @@ from flet_utils import (
 )
 from supabase_service import admin_create_user, admin_delete_user, admin_update_user, supabase_enabled
 from tenant_context import TenantContext
-from pos_service import create_local_invitation
 
 
 class Usuarios(SimpleCrudModule):
@@ -62,8 +61,10 @@ class Usuarios(SimpleCrudModule):
         if not supabase_enabled():
             return super().validate()
         required = ["email", "username", "rol"]
+        if self.selected_id is None:
+            required.append("password")
         if any(not (self.form_controls[name].value or "").strip() for name in required):
-            self._notify("Complete correo, usuario y rol.", error=True)
+            self._notify("Complete correo, usuario, rol y contraseña para cuentas nuevas.", error=True)
             return False
         password = (self.form_controls["password"].value or "").strip()
         if password and len(password) < 8:
@@ -83,9 +84,11 @@ class Usuarios(SimpleCrudModule):
         role = str(self.form_controls["rol"].value or "Vendedor")
         try:
             if self.selected_id is None:
-                invite_role = "store_admin" if role == "Administrador" else "cashier"
-                token = create_local_invitation(self.context, email, invite_role)
-                self._notify(f"Invitación creada. Modo local: /aceptar-invitacion?token={token}")
+                admin_create_user(
+                    email, password, username, role,
+                    self.organization_id, self.context,
+                )
+                self._notify("Usuario creado. Ya puede iniciar sesión con su correo y contraseña.")
             else:
                 profile = fetch_one("SELECT auth_user_id FROM usuarios WHERE id=? AND organization_id=?", (self.selected_id, self.organization_id))
                 if not profile or not profile.get("auth_user_id"):

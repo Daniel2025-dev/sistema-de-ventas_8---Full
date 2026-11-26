@@ -3,7 +3,7 @@ import flet as ft
 from container import Container
 from flet_utils import APP_TITLE, PALETTE, app_theme, apply_visual_theme, ensure_app_schema
 from login import Login, Registro
-from tenant_context import TenantContext
+from tenant_context import STORE_ADMIN, TenantContext
 from platform_admin import PlatformAdminView
 
 
@@ -62,7 +62,30 @@ class Manager:
         if not self.page:
             return
         if context.is_platform_admin:
-            self._mount(PlatformAdminView(self.page, context, self.show_login).build())
+            self._mount(
+                PlatformAdminView(
+                    self.page, context, self.show_platform_pos, self.show_login
+                ).build()
+            )
+            return
+        self._show_pos(context)
+
+    def show_platform_pos(self, context: TenantContext, organization_id: str | None) -> None:
+        if not organization_id:
+            return
+        self._show_pos(
+            TenantContext(
+                auth_user_id=context.auth_user_id,
+                email=context.email,
+                username=context.username,
+                organization_id=str(organization_id),
+                role=STORE_ADMIN,
+                is_platform_admin=True,
+            )
+        )
+
+    def _show_pos(self, context: TenantContext) -> None:
+        if not self.page:
             return
         self._mount(
             Container(

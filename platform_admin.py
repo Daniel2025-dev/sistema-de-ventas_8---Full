@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import secrets
 import uuid
 
@@ -9,6 +8,7 @@ import flet as ft
 
 from database import fetch_all, is_postgres, transaction
 from flet_utils import PALETTE, page_title, shell_card
+from supabase_service import admin_create_user
 from tenant_context import TenantContext
 
 
@@ -57,26 +57,55 @@ def create_store_with_invitation(context: TenantContext, name: str, owner_email:
 
 
 class PlatformAdminView:
-    def __init__(self, page: ft.Page, context: TenantContext, on_logout) -> None:
+    def __init__(self, page: ft.Page, context: TenantContext, on_enter_pos, on_logout) -> None:
         self.page = page
         self.context = context
+        self.on_enter_pos = on_enter_pos
         self.on_logout = on_logout
         self.name = ft.TextField(label="Nombre del almacén (opcional)")
         self.email = ft.TextField(label="Correo de la administradora")
+        self.password = ft.TextField(
+            label="Contraseña temporal", password=True, can_reveal_password=True,
+        )
+        self.password.helper_text = (
+            "Mínimo 8 caracteres. La administradora puede cambiarla luego."
+        )
         self.result = ft.Text(selectable=True, color=PALETTE["muted"])
+        organizations = fetch_all(
+            """SELECT o.id, COALESCE(NULLIF(e.nombre, ''), o.name, 'Mi negocio') AS nombre
+               FROM organizations o LEFT JOIN empresa e ON e.organization_id=o.id
+               ORDER BY e.id, o.name""", context=context,
+        )
+        self.organization = ft.Dropdown(
+            label="Comercio para entrar al POS",
+            options=[ft.dropdown.Option(key=str(row["id"]), text=str(row["nombre"])) for row in organizations],
+            value=str(organizations[0]["id"]) if organizations else None,
+        )
 
     def create(self, _=None) -> None:
         try:
             if "@" not in (self.email.value or ""):
                 raise ValueError("Ingrese un correo válido")
-            organization_id, token = create_store_with_invitation(self.context, self.name.value or "", self.email.value or "")
-            mode = os.getenv("INVITE_DELIVERY_MODE", "local").strip().lower()
-            self.result.value = (
-                f"Almacén creado: {organization_id}\n"
-                f"Invitación local ({mode}): /aceptar-invitacion?token={token}"
+            if len(self.password.value or "") < 8:
+                raise ValueError("La contraseña debe tener al menos 8 caracteres")
+            organization_id, _token = create_store_with_invitation(self.context, self.name.value or "", self.email.value or "")
+            admin_create_user(
+                self.email.value or "", self.password.value or "",
+                (self.email.value or "").split("@", 1)[0], "Administrador",
+                organization_id, self.context,
             )
+            self.result.value = (
+                "Almacén y administradora creados correctamente. "
+                "La cuenta ya puede iniciar sesión con su correo y contraseña."
+            )
+            self.result.color = PALETTE["success"]
+            self.organization.options.append(
+                ft.dropdown.Option(key=organization_id, text=(self.name.value or "Mi negocio").strip() or "Mi negocio")
+            )
+            self.organization.value = organization_id
             self.name.value = ""
             self.email.value = ""
+            self.password.value = ""
         except Exception as error:
             self.result.value = f"No fue posible crear el almacén: {error}"
             self.result.color = PALETTE["danger"]
@@ -86,10 +115,19 @@ class PlatformAdminView:
         return ft.Container(
             expand=True, padding=24,
             content=ft.Column([
-                page_title("Administración de plataforma", "Crea almacenes e invita a su primera administradora."),
+                page_title("Administración de plataforma", "Crea almacenes y sus credenciales de acceso."),
                 shell_card(ft.Column([
-                    self.name, self.email,
-                    ft.ElevatedButton("Crear almacén e invitación", on_click=self.create),
+                    self.organization,
+                    ft.ElevatedButton(
+                        "Entrar al sistema POS",
+                        icon=ft.Icons.POINT_OF_SALE_ROUNDED,
+                        on_click=lambda _: self.on_enter_pos(self.context, self.organization.value)
+                        if self.organization.value else None,
+                    ),
+                ], spacing=16), padding=24),
+                shell_card(ft.Column([
+                    self.name, self.email, self.password,
+                    ft.ElevatedButton("Crear almacén y administradora", on_click=self.create),
                     self.result,
                 ], spacing=16), padding=24),
                 ft.OutlinedButton("Cerrar sesión", on_click=lambda _: self.on_logout()),

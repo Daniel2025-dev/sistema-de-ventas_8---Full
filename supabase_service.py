@@ -164,7 +164,36 @@ def request_password_recovery(email: str) -> None:
     _client().auth.reset_password_for_email(email.strip(), options=options)
 
 
-def admin_create_user(email: str, password: str, username: str, role: str) -> str:
+def admin_create_user(
+    email: str,
+    password: str,
+    username: str,
+    role: str,
+    organization_id: str,
+    context: TenantContext,
+) -> str:
+    """Create Auth credentials and tenant records as one compensated operation."""
+    if len(password) < 8:
+        raise ValueError("La contraseña debe tener al menos 8 caracteres")
+    email = email.strip().casefold()
+    membership_role = "store_admin" if role == "Administrador" else "cashier"
+    if not supabase_enabled():
+        user_id = f"local:{os.urandom(16).hex()}"
+        with transaction(context) as cursor:
+            cursor.execute(
+                """INSERT INTO usuarios
+                   (organization_id, auth_user_id, email, username, password, rol, activo)
+                   VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                (organization_id, user_id, email, username, password, role),
+            )
+            cursor.execute(
+                """INSERT INTO organization_memberships
+                   (id, organization_id, auth_user_id, email, username, role, status)
+                   VALUES (?, ?, ?, ?, ?, ?, 'active')""",
+                (os.urandom(16).hex(), organization_id, user_id, email, username, membership_role),
+            )
+        return user_id
+
     secret = (
         os.getenv("SUPABASE_SECRET_KEY", "").strip()
         or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
@@ -178,15 +207,29 @@ def admin_create_user(email: str, password: str, username: str, role: str) -> st
         {"email": email, "password": password, "email_confirm": True}
     )
     user_id = str(response.user.id)
-    admin.table("usuarios").insert(
-        {
-            "auth_user_id": user_id,
-            "email": email,
-            "username": username,
-            "rol": role,
-            "activo": True,
-        }
-    ).execute()
+    try:
+        with transaction(context) as cursor:
+            cursor.execute(
+                """INSERT INTO organization_memberships
+                   (organization_id, auth_user_id, email, username, role, status)
+                   VALUES (?, ?, ?, ?, ?, 'active')""",
+                (organization_id, user_id, email, username, membership_role),
+            )
+            cursor.execute(
+                """INSERT INTO usuarios
+                   (organization_id, auth_user_id, email, username, password, rol, activo)
+                   VALUES (?, ?, ?, ?, NULL, ?, true)""",
+                (organization_id, user_id, email, username, role),
+            )
+            cursor.execute(
+                """UPDATE organization_invitations
+                   SET status='accepted', accepted_at=now(), delivery_status='account_created'
+                   WHERE organization_id=? AND email=? AND status='pending'""",
+                (organization_id, email),
+            )
+    except Exception:
+        admin.auth.admin.delete_user(user_id)
+        raise
     return user_id
 
 
