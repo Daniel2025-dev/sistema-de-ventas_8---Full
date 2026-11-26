@@ -24,7 +24,7 @@ from flet.controls.base_control import BaseControl
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DB_NAME = str(SQLITE_PATH)
-DEFAULT_COMPANY_LOGO = "imagenes/logo_at_logistica.png"
+DEFAULT_COMPANY_LOGO = "imagenes/logo_pos_transparente.png"
 APP_TITLE = "Punto de Venta Versión 4.2.1"
 
 PALETTE = {

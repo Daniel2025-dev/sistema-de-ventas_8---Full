@@ -88,7 +88,7 @@ class Login:
         self.on_success(context)
 
     def _hero_panel(self) -> ft.Control:
-        login_logo = image_base64("imagenes/logo_sistema_punto_venta.png")
+        login_logo = image_base64("imagenes/logo_pos_transparente.png")
         return shell_card(
             ft.Column(
                 [
