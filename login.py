@@ -2,7 +2,7 @@ from typing import Callable
 
 import flet as ft
 
-from flet_utils import DB_NAME, DEFAULT_COMPANY_LOGO, PALETTE, execute, fetch_one, get_company_info, image_base64, shell_card
+from flet_utils import DB_NAME, DEFAULT_COMPANY_LOGO, PALETTE, close_dialog, execute, fetch_one, get_company_info, image_base64, shell_card, show_dialog
 from supabase_service import register_from_invitation, register_local_from_invitation, request_password_recovery, sign_in, supabase_enabled
 from tenant_context import TenantContext
 
@@ -41,12 +41,11 @@ class Login:
         return len(user.strip()) > 0 and len(password.strip()) > 0
 
     def _notify(self, message: str, error: bool = False) -> None:
-        self.page.snack_bar = ft.SnackBar(
+        notification = ft.SnackBar(
             content=ft.Text(message),
             bgcolor=PALETTE["danger"] if error else PALETTE["primary"],
-            open=True,
         )
-        self.page.update()
+        show_dialog(self.page, notification)
 
     def login(self, _: ft.ControlEvent | None = None) -> None:
         user = self.username.value or ""
@@ -191,15 +190,66 @@ class Login:
         )
 
     def _recover_password(self, _: ft.ControlEvent | None = None) -> None:
-        email = (self.username.value or "").strip()
-        if "@" not in email:
-            self._notify("Escriba su correo en el campo de inicio de sesión.", error=True)
-            return
-        try:
-            request_password_recovery(email)
-            self._notify("Supabase envió el enlace de recuperación si el correo existe.")
-        except Exception as error:
-            self._notify(f"No fue posible solicitar la recuperación: {error}", error=True)
+        email = ft.TextField(
+            label="Correo electrónico",
+            value=(self.username.value or "").strip(),
+            keyboard_type=ft.KeyboardType.EMAIL,
+            autofocus=True,
+            prefix_icon=ft.Icons.EMAIL_OUTLINED,
+        )
+        status = ft.Text("", color=PALETTE["muted"], selectable=True)
+
+        def send_recovery(_event: ft.ControlEvent | None = None) -> None:
+            address = (email.value or "").strip().casefold()
+            if "@" not in address or "." not in address.rsplit("@", 1)[-1]:
+                status.value = "Ingrese un correo electrónico válido."
+                status.color = PALETTE["danger"]
+                self.page.update()
+                return
+            send_button.disabled = True
+            status.value = "Enviando enlace de recuperación..."
+            status.color = PALETTE["muted"]
+            self.page.update()
+            try:
+                request_password_recovery(address)
+                self.username.value = address
+                status.value = (
+                    "Solicitud enviada. Revise la bandeja de entrada y spam. "
+                    "Por seguridad, Supabase no confirma si el correo existe."
+                )
+                status.color = PALETTE["success"]
+                send_button.content = "Reenviar enlace"
+            except Exception as error:
+                status.value = f"No fue posible enviar el enlace: {error}"
+                status.color = PALETTE["danger"]
+            finally:
+                send_button.disabled = False
+                self.page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Recuperar contraseña"),
+            content=ft.Column(
+                [
+                    ft.Text("Ingrese el correo utilizado para acceder al POS."),
+                    email,
+                    status,
+                ],
+                width=460,
+                tight=True,
+                spacing=14,
+            ),
+            actions=[
+                ft.TextButton("Cerrar", on_click=lambda _: close_dialog(self.page, dialog)),
+            ],
+        )
+        send_button = ft.ElevatedButton(
+            "Enviar enlace",
+            icon=ft.Icons.MARK_EMAIL_READ_OUTLINED,
+            on_click=send_recovery,
+        )
+        dialog.actions.append(send_button)
+        show_dialog(self.page, dialog)
 
     def _show_invitation_dialog(self, _: ft.ControlEvent | None = None) -> None:
         token = ft.TextField(label="Token de invitación")

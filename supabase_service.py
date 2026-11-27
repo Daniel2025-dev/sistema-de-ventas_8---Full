@@ -159,7 +159,11 @@ def register_local_from_invitation(token: str, email: str, password: str) -> str
 def request_password_recovery(email: str) -> None:
     if not supabase_enabled():
         raise RuntimeError("Supabase Auth no está configurado")
-    redirect = os.getenv("PUBLIC_APP_URL", "").strip() or None
+    redirect = (
+        os.getenv("PUBLIC_APP_URL", "").strip()
+        or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+        or None
+    )
     options = {"redirect_to": redirect} if redirect else None
     _client().auth.reset_password_for_email(email.strip(), options=options)
 
