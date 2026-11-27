@@ -8,7 +8,7 @@ import flet as ft
 
 from database import fetch_all, is_postgres, transaction
 from flet_utils import PALETTE, page_title, shell_card
-from supabase_service import admin_create_user
+from supabase_service import admin_create_user, admin_delete_user
 from tenant_context import TenantContext
 
 
@@ -56,6 +56,61 @@ def create_store_with_invitation(context: TenantContext, name: str, owner_email:
     return organization_id, token
 
 
+def delete_store(context: TenantContext, organization_id: str) -> list[str]:
+    """Permanently remove one tenant and return Auth users safe to delete."""
+    if not context.is_platform_admin:
+        raise PermissionError("Solo la administración de plataforma puede eliminar negocios")
+    if not organization_id:
+        raise ValueError("Seleccione un negocio")
+
+    auth_user_ids: list[str] = []
+    with transaction(context) as cursor:
+        cursor.execute(
+            "SELECT id FROM organizations WHERE id=?" + (" FOR UPDATE" if is_postgres() else ""),
+            (organization_id,),
+        )
+        if not cursor.fetchone():
+            raise ValueError("El negocio ya no existe")
+        cursor.execute(
+            "SELECT auth_user_id FROM organization_memberships "
+            "WHERE organization_id=? AND auth_user_id IS NOT NULL",
+            (organization_id,),
+        )
+        candidate_ids = [str(row["auth_user_id"]) for row in cursor.fetchall()]
+
+        for table_name in ("ventas", "cotizaciones", "pedidos", "gastos"):
+            cursor.execute(f"DELETE FROM {table_name} WHERE organization_id=?", (organization_id,))
+        cursor.execute("DELETE FROM sale_operations WHERE organization_id=?", (organization_id,))
+        for table_name in (
+            "inventario", "caja", "clientes", "proveedores", "categorias",
+            "sucursal", "impuestos", "moneda",
+        ):
+            cursor.execute(f"DELETE FROM {table_name} WHERE organization_id=?", (organization_id,))
+        cursor.execute(
+            "DELETE FROM permisos_rol WHERE id_rol IN "
+            "(SELECT id FROM roles WHERE organization_id=?)",
+            (organization_id,),
+        )
+        cursor.execute("DELETE FROM roles WHERE organization_id=?", (organization_id,))
+        cursor.execute("DELETE FROM organization_invitations WHERE organization_id=?", (organization_id,))
+        cursor.execute("DELETE FROM organization_memberships WHERE organization_id=?", (organization_id,))
+        cursor.execute("DELETE FROM usuarios WHERE organization_id=?", (organization_id,))
+        cursor.execute("DELETE FROM empresa WHERE organization_id=?", (organization_id,))
+        cursor.execute("DELETE FROM organizations WHERE id=?", (organization_id,))
+
+        for user_id in candidate_ids:
+            cursor.execute(
+                "SELECT COUNT(*) AS total FROM organization_memberships WHERE auth_user_id=?",
+                (user_id,),
+            )
+            membership_count = int(cursor.fetchone()["total"])
+            cursor.execute("SELECT COUNT(*) AS total FROM platform_admins WHERE auth_user_id=?", (user_id,))
+            platform_count = int(cursor.fetchone()["total"])
+            if membership_count == 0 and platform_count == 0:
+                auth_user_ids.append(user_id)
+    return auth_user_ids
+
+
 class PlatformAdminView:
     def __init__(self, page: ft.Page, context: TenantContext, on_enter_pos, on_logout) -> None:
         self.page = page
@@ -81,6 +136,80 @@ class PlatformAdminView:
             options=[ft.dropdown.Option(key=str(row["id"]), text=str(row["nombre"])) for row in organizations],
             value=str(organizations[0]["id"]) if organizations else None,
         )
+
+    def _selected_name(self) -> str:
+        selected = str(self.organization.value or "")
+        for option in self.organization.options or []:
+            if str(option.key) == selected:
+                return str(option.text or "Mi negocio")
+        return "Mi negocio"
+
+    def confirm_delete(self, _=None) -> None:
+        organization_id = str(self.organization.value or "")
+        if not organization_id:
+            self.result.value = "Seleccione un negocio para eliminar."
+            self.result.color = PALETTE["danger"]
+            self.page.update()
+            return
+        expected_name = self._selected_name()
+        confirmation = ft.TextField(
+            label=f'Escriba "{expected_name}" para confirmar', autofocus=True
+        )
+
+        def perform_delete(_event: ft.ControlEvent) -> None:
+            if (confirmation.value or "").strip() != expected_name:
+                confirmation.error_text = "El nombre no coincide."
+                self.page.update()
+                return
+            try:
+                auth_users = delete_store(self.context, organization_id)
+                for user_id in auth_users:
+                    if not user_id.startswith("local:"):
+                        try:
+                            admin_delete_user(user_id)
+                        except Exception:
+                            # La membresía ya fue retirada; una cuenta Auth huérfana
+                            # no puede entrar ni ver datos de otro comercio.
+                            pass
+                self.organization.options = [
+                    option for option in (self.organization.options or [])
+                    if str(option.key) != organization_id
+                ]
+                self.organization.value = (
+                    str(self.organization.options[0].key)
+                    if self.organization.options else None
+                )
+                dialog.open = False
+                self.result.value = f'Negocio "{expected_name}" eliminado definitivamente.'
+                self.result.color = PALETTE["success"]
+                self.page.update()
+            except Exception as error:
+                self.result.value = f"No fue posible eliminar el negocio: {error}"
+                self.result.color = PALETTE["danger"]
+                self.page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Eliminar negocio definitivamente"),
+            content=ft.Column([
+                ft.Text(
+                    "Se eliminarán usuarios, ventas, inventario, caja, reportes y configuración. "
+                    "Esta acción no se puede deshacer."
+                ),
+                confirmation,
+            ], tight=True, width=480),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: setattr(dialog, "open", False)),
+                ft.ElevatedButton(
+                    "Eliminar definitivamente",
+                    icon=ft.Icons.DELETE_FOREVER_OUTLINED,
+                    bgcolor=PALETTE["danger"],
+                    color=ft.Colors.WHITE,
+                    on_click=perform_delete,
+                ),
+            ],
+        )
+        self.page.show_dialog(dialog)
 
     def create(self, _=None) -> None:
         try:
@@ -123,6 +252,12 @@ class PlatformAdminView:
                         icon=ft.Icons.POINT_OF_SALE_ROUNDED,
                         on_click=lambda _: self.on_enter_pos(self.context, self.organization.value)
                         if self.organization.value else None,
+                    ),
+                    ft.OutlinedButton(
+                        "Eliminar negocio",
+                        icon=ft.Icons.DELETE_FOREVER_OUTLINED,
+                        style=ft.ButtonStyle(color=PALETTE["danger"]),
+                        on_click=self.confirm_delete,
                     ),
                 ], spacing=16), padding=24),
                 shell_card(ft.Column([

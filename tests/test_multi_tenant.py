@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from tenant_context import CASHIER, PLATFORM_ADMIN, STORE_ADMIN, TenantContext
+from platform_admin import delete_store
 
 
 class TenantContextTests(unittest.TestCase):
@@ -18,6 +19,11 @@ class TenantContextTests(unittest.TestCase):
         self.assertTrue(cashier.can_sell)
         with self.assertRaises(PermissionError):
             cashier.require_store_admin()
+
+    def test_cashier_cannot_delete_a_business(self) -> None:
+        cashier = TenantContext("u3", "cashier@test.local", "Caja", "org-pinos", CASHIER)
+        with self.assertRaises(PermissionError):
+            delete_store(cashier, "org-pinos")
 
     def test_platform_admin_is_not_bound_to_render_google_account(self) -> None:
         admin = TenantContext("supabase-auth-id", "owner@test.local", "Owner", None, PLATFORM_ADMIN, True)
