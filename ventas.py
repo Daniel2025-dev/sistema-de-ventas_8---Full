@@ -3,7 +3,6 @@ import os
 import subprocess
 import sys
 import uuid
-from collections import defaultdict
 from pathlib import Path
 
 import flet as ft
@@ -48,6 +47,8 @@ class Ventas:
         self.product_lookup_by_name: dict[str, dict] = {}
         self.product_lookup_by_code: dict[str, dict] = {}
         self.selected_cart_index: int | None = None
+        self._cart_rows: dict[int, ft.DataRow] = {}
+        self._scan_busy = False
         self.selected_invoice: int | None = None
         self.caja_abierta = False
         self.monto_total_ventas = 0.0
@@ -471,9 +472,13 @@ class Ventas:
         self._schedule_scan_focus()
 
     def escanear_codigo(self, _: ft.ControlEvent | None = None) -> None:
+        if self._scan_busy:
+            return
+        self._scan_busy = True
         barcode = self._normalize_code(self.scan_input.value)
 
         if not barcode:
+            self._scan_busy = False
             self._notify("Escanee o escriba un codigo valido.", error=True)
             self._schedule_scan_focus()
             return
@@ -482,7 +487,8 @@ class Ventas:
         if not product:
             self.scan_status.value = f"Codigo no encontrado: {barcode}"
             self.scan_input.value = ""
-            self.page.update()
+            self.page.update(self.scan_input, self.scan_status)
+            self._scan_busy = False
             self._notify("No existe un producto con ese codigo de barras.", error=True)
             self._schedule_scan_focus()
             return
@@ -490,16 +496,18 @@ class Ventas:
         cliente = self._quick_client()
         if not self._upsert_catalog_item(cliente, product, 1):
             self.scan_input.value = ""
-            self.page.update()
+            self.page.update(self.scan_input)
+            self._scan_busy = False
             self._schedule_scan_focus()
             return
+        cart_index = self._find_cart_item_index(cliente, product["nombre"])
         self.scan_status.value = (
             f"Agregado: {product['nombre']} · escanee el siguiente producto."
         )
         self.scan_input.value = ""
         self.entry_cantidad.value = "1"
-        self.refresh_cart()
-        self._schedule_scan_focus()
+        self.refresh_cart(changed_index=cart_index)
+        self._scan_busy = False
 
     def productos_no_registrados(self, _: ft.ControlEvent | None = None) -> None:
         if not self.entry_cliente.value:
@@ -663,28 +671,55 @@ class Ventas:
     def _money(self, amount: float) -> str:
         return f"{self.currency} {amount:,.2f}"
 
-    def refresh_cart(self) -> None:
-        self.cart_table.rows = [
-            ft.DataRow(
-                cells=[
-                    ft.DataCell(ft.Text(str(item["factura"]))),
-                    ft.DataCell(ft.Text(item["cliente"])),
-                    ft.DataCell(ft.Text(item["producto"])),
-                    ft.DataCell(ft.Text(str(item.get("lote") or ""))),
-                    ft.DataCell(ft.Text(str(item.get("fecha_vencimiento") or ""))),
-                    ft.DataCell(ft.Text(f"{item['precio']:,.2f}")),
-                    ft.DataCell(ft.Text(str(item["cantidad"]))),
-                    ft.DataCell(ft.Text(f"{item['impuesto']:,.2f}")),
-                    ft.DataCell(ft.Text(f"{item['total']:,.2f}")),
-                ],
-                selected=index == self.selected_cart_index,
-                on_select_change=lambda event, index=index: self.seleccionar_cart(index),
-            )
-            for index, item in enumerate(self.cart)
+    @staticmethod
+    def _cart_values(item: dict) -> list[str]:
+        return [
+            str(item["factura"]),
+            item["cliente"],
+            item["producto"],
+            str(item.get("lote") or ""),
+            str(item.get("fecha_vencimiento") or ""),
+            f"{item['precio']:,.2f}",
+            str(item["cantidad"]),
+            f"{item['impuesto']:,.2f}",
+            f"{item['total']:,.2f}",
         ]
+
+    def _build_cart_row(self, index: int, item: dict) -> ft.DataRow:
+        row = ft.DataRow(
+            cells=[ft.DataCell(ft.Text(value)) for value in self._cart_values(item)],
+            selected=index == self.selected_cart_index,
+            on_select_change=lambda event, index=index: self.seleccionar_cart(index),
+        )
+        self._cart_rows[id(item)] = row
+        return row
+
+    def refresh_cart(self, changed_index: int | None = None) -> None:
+        incremental = changed_index is not None and 0 <= changed_index < len(self.cart)
+        if incremental:
+            item = self.cart[changed_index]
+            row = self._cart_rows.get(id(item))
+            if row is None:
+                row = self._build_cart_row(changed_index, item)
+                self.cart_table.rows.append(row)
+            else:
+                for cell, value in zip(row.cells, self._cart_values(item)):
+                    cell.content.value = value
+        else:
+            self._cart_rows.clear()
+            self.cart_table.rows = [
+                self._build_cart_row(index, item)
+                for index, item in enumerate(self.cart)
+            ]
         self.label_precio_total.value = f"Precio a pagar: {self._money(self.calcular_precio_total())}"
         self.actualizar_stock(update_page=False)
-        self.page.update()
+        self.page.update(
+            self.cart_table,
+            self.label_precio_total,
+            self.label_stock,
+            self.scan_status,
+            self.scan_input,
+        )
 
     def abrir_caja(self, _: ft.ControlEvent | None = None) -> None:
         abierta = fetch_scalar("SELECT COUNT(*) FROM caja WHERE estado='abierta' AND organization_id=?", (self.organization_id,), default=0)
@@ -947,60 +982,10 @@ class Ventas:
             self._schedule_scan_focus()
             return
 
-        item_index = synced_index if synced_index is not None else self.selected_cart_index if self.selected_cart_index is not None else len(self.cart) - 1
-        self.refresh_cart()
-        item = self.cart[item_index]
-        monto = ft.TextField(
-            label="Monto recibido",
-            value=str(round(self.calcular_precio_total(), 2)),
-            border_radius=14,
-            autofocus=True,
-        )
-        total_label = ft.Text("", size=18, weight=ft.FontWeight.BOLD)
-        vuelto_label = ft.Text("", size=20, weight=ft.FontWeight.BOLD, color=PALETTE["secondary"])
-
-        def update_labels() -> None:
-            total = self.calcular_precio_total()
-            try:
-                recibido = float(monto.value or "0")
-            except ValueError:
-                recibido = 0.0
-            cambio = max(0.0, recibido - total)
-            total_label.value = f"Total: {self._money(total)}"
-            vuelto_label.value = f"Vuelto: {self._money(cambio)}"
-
-        def update_change(event: ft.ControlEvent | None = None) -> None:
-            update_labels()
-            self.page.update()
-
-        def cobrar(event: ft.ControlEvent) -> None:
-            self.procesar_pago(monto.value or "0", "efectivo", "0", dialog, mostrar_vuelto=False)
-
-        monto.on_change = update_change
-        update_labels()
-
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Venta rapida"),
-            content=ft.Container(
-                width=responsive_dialog_width(self.page, 420),
-                content=ft.Column(
-                    [
-                        ft.Text(str(item["producto"]), weight=ft.FontWeight.BOLD),
-                        monto,
-                        total_label,
-                        vuelto_label,
-                    ],
-                    tight=True,
-                    spacing=10,
-                ),
-            ),
-            actions=[
-                ft.TextButton("Cancelar", on_click=lambda event: close_dialog(self.page, dialog)),
-                ft.ElevatedButton("Cobrar", icon=ft.Icons.FLASH_ON_OUTLINED, on_click=cobrar),
-            ],
-        )
-        show_dialog(self.page, dialog)
+        if synced_index is not None:
+            self.refresh_cart(changed_index=synced_index)
+        total = round(self.calcular_precio_total(), 2)
+        self.procesar_pago(str(total), "efectivo", "0", None, mostrar_vuelto=False)
 
     def realizar_pago(self, _: ft.ControlEvent | None = None) -> None:
         synced_index = self._sync_selected_product_to_cart()
@@ -1240,32 +1225,26 @@ class Ventas:
     def _sales_summary_rows(self) -> list[dict]:
         factura = (self.invoice_filter.value or "").strip()
         cliente = (self.client_filter.value or "").strip().lower()
-        rows = fetch_all("SELECT factura, cliente, total, fecha, hora, cajero FROM ventas WHERE organization_id=? ORDER BY factura DESC", (self.organization_id,))
-        grouped: dict[int, dict] = defaultdict(lambda: {"cliente": "", "total": 0.0, "fecha": "", "hora": "", "cajero": ""})
-        for row in rows:
-            if factura and str(row["factura"]) != factura:
-                continue
-            if cliente and cliente not in row["cliente"].lower():
-                continue
-            data = grouped[row["factura"]]
-            data["cliente"] = row["cliente"]
-            data["fecha"] = row["fecha"]
-            data["hora"] = row["hora"]
-            data["cajero"] = row["cajero"]
-            data["total"] += float(row["total"])
-        result = []
-        for invoice, data in grouped.items():
-            result.append(
-                {
-                    "factura": invoice,
-                    "cliente": data["cliente"],
-                    "total": data["total"],
-                    "fecha": data["fecha"],
-                    "hora": data["hora"],
-                    "cajero": data["cajero"],
-                }
-            )
-        return result
+        conditions = ["organization_id=?"]
+        params: list[object] = [self.organization_id]
+        if factura:
+            conditions.append("factura=?")
+            params.append(factura)
+        if cliente:
+            conditions.append("LOWER(cliente) LIKE ?")
+            params.append(f"%{cliente}%")
+        return fetch_all(
+            f"""
+            SELECT factura, MAX(cliente) AS cliente, SUM(total) AS total,
+                   MAX(fecha) AS fecha, MAX(hora) AS hora, MAX(cajero) AS cajero
+            FROM ventas
+            WHERE {' AND '.join(conditions)}
+            GROUP BY factura
+            ORDER BY factura DESC
+            LIMIT 100
+            """,
+            tuple(params),
+        )
 
     def select_invoice(self, invoice: int) -> None:
         self.selected_invoice = invoice
