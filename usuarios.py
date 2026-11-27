@@ -73,6 +73,8 @@ class Usuarios(SimpleCrudModule):
         return True
 
     def save(self, _: ft.ControlEvent | None = None) -> None:
+        if self.context:
+            self.context.require_store_admin()
         if not supabase_enabled():
             super().save()
             return
@@ -106,6 +108,8 @@ class Usuarios(SimpleCrudModule):
         self.refresh()
 
     def _perform_delete(self, pin_value: str | None = None) -> None:
+        if self.context:
+            self.context.require_store_admin()
         if not supabase_enabled():
             super()._perform_delete(pin_value)
             return
@@ -133,7 +137,11 @@ class Usuarios(SimpleCrudModule):
         self.page.update()
 
     def _role_id(self, role_name: str) -> int | None:
-        role = fetch_one("SELECT id FROM roles WHERE nombre = ? AND organization_id=?", (role_name, self.organization_id))
+        role = fetch_one(
+            "SELECT id FROM roles WHERE nombre = ? AND organization_id=?",
+            (role_name, self.organization_id),
+            context=self.context,
+        )
         return int(role["id"]) if role else None
 
     def _current_modules_for_role(self, role_name: str) -> set[str]:
@@ -148,10 +156,13 @@ class Usuarios(SimpleCrudModule):
             WHERE pr.id_rol = ?
             """,
             (role_id,),
+            context=self.context,
         )
         return {row["modulo"] for row in rows}
 
     def open_permissions(self, _: ft.ControlEvent | None = None) -> None:
+        if self.context:
+            self.context.require_store_admin()
         role_control = self.form_controls["rol"]
         role_name = role_control.value if isinstance(role_control, ft.Dropdown) else ""
         if not role_name:
@@ -179,17 +190,23 @@ class Usuarios(SimpleCrudModule):
                 self._notify("No se encontro el rol seleccionado.", error=True)
                 return
 
-            execute("DELETE FROM permisos_rol WHERE id_rol = ?", (role_id,))
+            execute(
+                "DELETE FROM permisos_rol WHERE id_rol = ?",
+                (role_id,),
+                context=self.context,
+            )
             for module_name, checkbox in checks.items():
                 if checkbox.value:
                     permission = fetch_one(
                         "SELECT id FROM permisos WHERE modulo = ?",
                         (module_name,),
+                        context=self.context,
                     )
                     if permission:
                         execute(
                             "INSERT INTO permisos_rol (id_rol, id_permiso) VALUES (?, ?)",
                             (role_id, permission["id"]),
+                            context=self.context,
                         )
             close_dialog(self.page, dialog)
             self._notify(f"Permisos guardados para el rol {role_name}.")

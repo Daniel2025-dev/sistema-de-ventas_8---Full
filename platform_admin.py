@@ -8,6 +8,7 @@ import flet as ft
 
 from database import fetch_all, is_postgres, transaction
 from flet_utils import PALETTE, page_title, shell_card
+from role_permissions import DEFAULT_ROLE_MODULES
 from supabase_service import admin_create_user, admin_delete_user
 from tenant_context import TenantContext
 
@@ -52,6 +53,23 @@ def create_store_with_invitation(context: TenantContext, name: str, owner_email:
                     "INSERT OR IGNORE INTO roles(organization_id, nombre) VALUES (?, ?)",
                     (organization_id, role_name),
                 )
+        for role_name, modules in DEFAULT_ROLE_MODULES.items():
+            for module_name in modules:
+                if is_postgres():
+                    cursor.execute(
+                        """INSERT INTO permisos_rol(id_rol, id_permiso)
+                           SELECT r.id, p.id FROM roles r CROSS JOIN permisos p
+                           WHERE r.organization_id=? AND r.nombre=? AND p.modulo=?
+                           ON CONFLICT DO NOTHING""",
+                        (organization_id, role_name, module_name),
+                    )
+                else:
+                    cursor.execute(
+                        """INSERT OR IGNORE INTO permisos_rol(id_rol, id_permiso)
+                           SELECT r.id, p.id FROM roles r CROSS JOIN permisos p
+                           WHERE r.nombre=? AND p.modulo=?""",
+                        (role_name, module_name),
+                    )
         cursor.execute("INSERT INTO organization_invitations(id, organization_id, email, role, token_hash, status, delivery_status, delivery_attempts, invited_by, expires_at) VALUES (?, ?, ?, 'store_admin', ?, 'pending', 'local', 1, ?, datetime('now', '+48 hours'))" if not is_postgres() else "INSERT INTO organization_invitations(id, organization_id, email, role, token_hash, status, delivery_status, delivery_attempts, invited_by) VALUES (?, ?, ?, 'store_admin', ?, 'pending', 'local', 1, ?)", (invitation_id, organization_id, email, token_hash, context.auth_user_id))
     return organization_id, token
 

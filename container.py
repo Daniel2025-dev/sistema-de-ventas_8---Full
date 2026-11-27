@@ -16,6 +16,7 @@ from flet_utils import (
     image_base64,
     page_title,
     shell_card,
+    show_dialog,
     stat_card,
 )
 from tenant_context import TenantContext
@@ -73,12 +74,11 @@ class Container:
         )
 
     def _notify(self, message: str, error: bool = False) -> None:
-        self.page.snack_bar = ft.SnackBar(
+        notification = ft.SnackBar(
             content=ft.Text(message),
             bgcolor=PALETTE["danger"] if error else PALETTE["primary"],
-            open=True,
         )
-        self.page.update()
+        show_dialog(self.page, notification)
 
     def set_user(self, user: str) -> None:
         self.user = user
@@ -97,9 +97,14 @@ class Container:
                 JOIN roles r ON LOWER(r.nombre) = LOWER(u.rol)
                 JOIN permisos_rol pr ON pr.id_rol = r.id
                 JOIN permisos p ON p.id = pr.id_permiso
-                WHERE u.username = ? AND u.organization_id=? AND r.organization_id=?
+                WHERE u.auth_user_id = ? AND u.organization_id=? AND r.organization_id=?
                 """,
-                (self.user, self.context.require_organization(), self.context.require_organization()),
+                (
+                    self.context.auth_user_id,
+                    self.context.require_organization(),
+                    self.context.require_organization(),
+                ),
+                context=self.context,
             )
             self._allowed_modules = {str(row["modulo"]) for row in rows}
         return modulo in self._allowed_modules
@@ -342,6 +347,8 @@ class Container:
         ]
         for module_name in priority:
             if module_name in self.view_cache:
+                continue
+            if not self.verificar_acceso(module_name):
                 continue
             try:
                 prepared = apply_visual_theme(registry[module_name]())
