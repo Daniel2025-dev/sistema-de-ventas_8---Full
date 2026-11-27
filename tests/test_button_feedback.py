@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import flet as ft
 
@@ -54,8 +55,10 @@ class ButtonFeedbackTests(unittest.TestCase):
 
         self.assertEqual(dropdown.width, float("inf"))
         self.assertIsNone(dropdown.menu_width)
-        dropdown.on_size_change(SimpleNamespace(width=346, height=56))
+        with patch.object(ft.Dropdown, "update") as update:
+            dropdown.on_size_change(SimpleNamespace(width=346, height=56))
         self.assertEqual(dropdown.menu_width, 346)
+        update.assert_called_once_with()
 
 
 if __name__ == "__main__":

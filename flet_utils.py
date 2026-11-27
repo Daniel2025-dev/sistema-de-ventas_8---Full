@@ -341,6 +341,14 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
                 rendered_width = max(1.0, float(event.width))
                 if control.menu_width != rendered_width:
                     control.menu_width = rendered_width
+                    # Size events do not automatically send modified control
+                    # properties back to the browser. Push the measured width
+                    # before the user opens the overlay.
+                    try:
+                        control.update()
+                    except RuntimeError:
+                        # Unit tests and controls not mounted on a Page yet.
+                        pass
                 if previous_size_handler is not None:
                     previous_size_handler(event)
 
