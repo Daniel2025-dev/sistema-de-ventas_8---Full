@@ -35,6 +35,8 @@ PALETTE = {
     "sidebar": "#F7FAFF",
     "input_fill": "#EDF4FF",
     "primary": "#1565C0",
+    "primary_hover": "#0D5BB5",
+    "primary_pressed": "#0A478F",
     "primary_soft": "#D9E9FF",
     "secondary": "#0F766E",
     "secondary_soft": "#D5F5F0",
@@ -43,8 +45,12 @@ PALETTE = {
     "muted": "#445A77",
     "border": "#B9CBE3",
     "danger": "#C62828",
+    "danger_hover": "#B71C1C",
+    "danger_pressed": "#8E1515",
     "danger_soft": "#FDE7E9",
     "success": "#15803D",
+    "success_hover": "#107237",
+    "success_pressed": "#0B5A2B",
     "success_soft": "#DCFCE7",
 }
 
@@ -123,6 +129,114 @@ BUTTON_TEXT_STYLE = ft.TextStyle(
     size=15,
     weight=ft.FontWeight.W_600,
 )
+
+_SUCCESS_ACTIONS = (
+    "aceptar", "abrir", "agregar", "cobrar", "confirmar", "crear", "guardar",
+    "importar", "iniciar", "pagar", "registrar", "vender",
+)
+_DANGER_ACTIONS = (
+    "anular", "borrar", "cerrar caja", "desactivar", "eliminar", "quitar",
+)
+
+
+def _button_label(control: BaseControl) -> str:
+    content = getattr(control, "content", None)
+    if isinstance(content, str):
+        return content.strip().lower()
+    if isinstance(content, ft.Text):
+        return str(content.value or "").strip().lower()
+    tooltip = getattr(control, "tooltip", None)
+    return tooltip.strip().lower() if isinstance(tooltip, str) else ""
+
+
+def _button_tone(control: BaseControl) -> str:
+    label = _button_label(control)
+    if any(action in label for action in _DANGER_ACTIONS):
+        return "danger"
+    if any(action in label for action in _SUCCESS_ACTIONS):
+        return "success"
+    return "primary"
+
+
+def _interactive_button_style(control: BaseControl) -> ft.ButtonStyle:
+    """Return consistent, immediate visual feedback for every action button."""
+    tone = _button_tone(control)
+    base = PALETTE[tone]
+    hover = PALETTE[f"{tone}_hover"]
+    pressed = PALETTE[f"{tone}_pressed"]
+    soft = PALETTE.get(f"{tone}_soft", PALETTE["primary_soft"])
+    disabled_bg = "#E2E8F0"
+    disabled_fg = "#8190A5"
+    is_filled = isinstance(control, ft.ElevatedButton)
+
+    if is_filled:
+        bgcolor = {
+            ft.ControlState.DEFAULT: base,
+            ft.ControlState.HOVERED: hover,
+            ft.ControlState.PRESSED: pressed,
+            ft.ControlState.FOCUSED: hover,
+            ft.ControlState.DISABLED: disabled_bg,
+        }
+        color = {
+            ft.ControlState.DEFAULT: ft.Colors.WHITE,
+            ft.ControlState.HOVERED: ft.Colors.WHITE,
+            ft.ControlState.PRESSED: ft.Colors.WHITE,
+            ft.ControlState.DISABLED: disabled_fg,
+        }
+    else:
+        bgcolor = {
+            ft.ControlState.DEFAULT: PALETTE["surface"],
+            ft.ControlState.HOVERED: soft,
+            ft.ControlState.PRESSED: base,
+            ft.ControlState.FOCUSED: soft,
+            ft.ControlState.DISABLED: "#F1F5F9",
+        }
+        color = {
+            ft.ControlState.DEFAULT: base,
+            ft.ControlState.HOVERED: hover,
+            ft.ControlState.PRESSED: ft.Colors.WHITE,
+            ft.ControlState.DISABLED: disabled_fg,
+        }
+
+    return ft.ButtonStyle(
+        color=color,
+        bgcolor=bgcolor,
+        overlay_color={
+            ft.ControlState.HOVERED: "#14FFFFFF" if is_filled else "#0AFFFFFF",
+            ft.ControlState.PRESSED: "#38FFFFFF",
+        },
+        elevation={
+            ft.ControlState.DEFAULT: 1 if is_filled else 0,
+            ft.ControlState.HOVERED: 4 if is_filled else 1,
+            ft.ControlState.PRESSED: 0,
+            ft.ControlState.DISABLED: 0,
+        },
+        side=None if is_filled else {
+            ft.ControlState.DEFAULT: ft.BorderSide(1.4, PALETTE["border"]),
+            ft.ControlState.HOVERED: ft.BorderSide(1.6, base),
+            ft.ControlState.PRESSED: ft.BorderSide(1.6, pressed),
+            ft.ControlState.DISABLED: ft.BorderSide(1.2, "#CBD5E1"),
+        },
+        shape=ft.RoundedRectangleBorder(radius=14),
+        padding=ft.Padding.symmetric(horizontal=20, vertical=15),
+        animation_duration=110,
+        enable_feedback=True,
+        text_style=BUTTON_TEXT_STYLE,
+        mouse_cursor={
+            ft.ControlState.DEFAULT: ft.MouseCursor.CLICK,
+            ft.ControlState.DISABLED: ft.MouseCursor.BASIC,
+        },
+    )
+
+
+def _apply_button_style(control: BaseControl) -> None:
+    control.style = _interactive_button_style(control)
+    if isinstance(control, ft.IconButton):
+        control.enable_feedback = True
+        control.hover_color = PALETTE["primary_soft"]
+        control.highlight_color = PALETTE["primary_pressed"]
+        control.splash_color = PALETTE["primary"]
+        control.mouse_cursor = ft.MouseCursor.CLICK
 
 
 def _iter_controls(value: Any, seen: set[int]) -> list[BaseControl]:
@@ -259,11 +373,8 @@ def apply_visual_theme(root: ft.Control | BaseControl | None) -> ft.Control | Ba
             control.shape = ft.RoundedRectangleBorder(radius=24)
         elif isinstance(control, ft.SnackBar):
             control.bgcolor = control.bgcolor or PALETTE["primary"]
-        elif isinstance(control, (ft.ElevatedButton, ft.OutlinedButton, ft.TextButton)):
-            if control.style is None:
-                control.style = ft.ButtonStyle()
-            if control.style.text_style is None:
-                control.style.text_style = BUTTON_TEXT_STYLE
+        elif isinstance(control, (ft.ElevatedButton, ft.OutlinedButton, ft.TextButton, ft.IconButton)):
+            _apply_button_style(control)
         elif isinstance(control, ft.Row):
             # Action bars must remain usable on phones and narrow tablets.
             actionable = sum(
@@ -1044,36 +1155,16 @@ def app_theme() -> ft.Theme:
             barrier_color="#7A10213A",
         ),
         button_theme=ft.ButtonTheme(
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=16),
-                bgcolor=PALETTE["primary"],
-                color=ft.Colors.WHITE,
-                padding=ft.Padding.symmetric(horizontal=22, vertical=16),
-                text_style=BUTTON_TEXT_STYLE,
-            )
+            style=_interactive_button_style(ft.ElevatedButton())
         ),
         outlined_button_theme=ft.OutlinedButtonTheme(
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=16),
-                color=PALETTE["primary"],
-                side=ft.BorderSide(1.4, PALETTE["border"]),
-                bgcolor=PALETTE["surface"],
-                padding=ft.Padding.symmetric(horizontal=22, vertical=16),
-                text_style=BUTTON_TEXT_STYLE,
-            )
+            style=_interactive_button_style(ft.OutlinedButton())
         ),
         text_button_theme=ft.TextButtonTheme(
-            style=ft.ButtonStyle(
-                color=PALETTE["primary"],
-                shape=ft.RoundedRectangleBorder(radius=14),
-                text_style=BUTTON_TEXT_STYLE,
-            )
+            style=_interactive_button_style(ft.TextButton())
         ),
         icon_button_theme=ft.IconButtonTheme(
-            style=ft.ButtonStyle(
-                color=PALETTE["primary"],
-                shape=ft.RoundedRectangleBorder(radius=14),
-            )
+            style=_interactive_button_style(ft.IconButton())
         ),
         dropdown_theme=ft.DropdownTheme(
             text_style=INPUT_TEXT_STYLE,
