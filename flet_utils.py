@@ -168,6 +168,7 @@ def _interactive_button_style(control: BaseControl) -> ft.ButtonStyle:
     disabled_bg = "#E2E8F0"
     disabled_fg = "#8190A5"
     is_filled = isinstance(control, ft.ElevatedButton)
+    is_icon = isinstance(control, ft.IconButton)
 
     if is_filled:
         bgcolor = {
@@ -218,7 +219,7 @@ def _interactive_button_style(control: BaseControl) -> ft.ButtonStyle:
             ft.ControlState.DISABLED: ft.BorderSide(1.2, "#CBD5E1"),
         },
         shape=ft.RoundedRectangleBorder(radius=14),
-        padding=ft.Padding.symmetric(horizontal=20, vertical=15),
+        padding=8 if is_icon else ft.Padding.symmetric(horizontal=20, vertical=15),
         animation_duration=110,
         enable_feedback=True,
         text_style=BUTTON_TEXT_STYLE,
@@ -232,6 +233,10 @@ def _interactive_button_style(control: BaseControl) -> ft.ButtonStyle:
 def _apply_button_style(control: BaseControl) -> None:
     control.style = _interactive_button_style(control)
     if isinstance(control, ft.IconButton):
+        # Icon actions next to a field should read as compact accessories, not
+        # compete visually with the primary form control.
+        control.width = control.width or 52
+        control.height = control.height or 52
         control.enable_feedback = True
         control.hover_color = PALETTE["primary_soft"]
         control.highlight_color = PALETTE["primary_pressed"]
@@ -323,18 +328,10 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
 
         # Keep the popup proportional to its contents instead of letting an
         # infinite-width form control expand the overlay across the screen.
-        field_label = (
-            str(control.label.value or "")
-            if isinstance(control.label, ft.Text)
-            else str(control.label or "")
-        )
-        longest_label = max(
-            [len(field_label), *(len(label) for label in option_labels)],
-            default=12,
-        )
-        if control.width is None:
-            control.width = max(220, min(300, longest_label * 9 + 80))
-        control.menu_width = max(180, min(440, longest_label * 9 + 72))
+        # Leave the field width fluid so Rows, Columns and responsive
+        # containers can use all available space. With menu_width unset Flet
+        # aligns the popup to the field instead of creating a narrow menu.
+        control.menu_width = None
         control.menu_height = min(320, max(112, len(option_labels) * 48 + 16))
         control.expanded_insets = 0
         control.fill_color = PALETTE["surface_soft"]

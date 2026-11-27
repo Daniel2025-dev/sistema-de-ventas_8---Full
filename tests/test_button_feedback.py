@@ -34,6 +34,26 @@ class ButtonFeedbackTests(unittest.TestCase):
         self.assertEqual(button.style.bgcolor[ft.ControlState.PRESSED], PALETTE["primary"])
         self.assertEqual(button.style.animation_duration, 110)
 
+    def test_icon_action_stays_compact(self):
+        button = ft.IconButton(ft.Icons.REFRESH_ROUNDED)
+
+        apply_visual_theme(button)
+
+        self.assertEqual(button.width, 52)
+        self.assertEqual(button.height, 52)
+        self.assertEqual(button.style.padding, 8)
+
+    def test_dropdown_keeps_fluid_width_and_matching_menu(self):
+        dropdown = ft.Dropdown(
+            label="Producto",
+            options=[ft.dropdown.Option("Arroz 1 kg")],
+        )
+
+        apply_visual_theme(dropdown)
+
+        self.assertIsNone(dropdown.width)
+        self.assertIsNone(dropdown.menu_width)
+
 
 if __name__ == "__main__":
     unittest.main()
