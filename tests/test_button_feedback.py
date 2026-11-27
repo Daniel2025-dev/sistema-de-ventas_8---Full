@@ -1,6 +1,4 @@
 import unittest
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import flet as ft
 
@@ -45,7 +43,7 @@ class ButtonFeedbackTests(unittest.TestCase):
         self.assertEqual(button.height, 52)
         self.assertEqual(button.style.padding, 8)
 
-    def test_dropdown_keeps_fluid_width_and_matching_menu(self):
+    def test_regular_dropdown_has_matching_finite_field_and_menu(self):
         dropdown = ft.Dropdown(
             label="Producto",
             options=[ft.dropdown.Option("Arroz 1 kg")],
@@ -53,12 +51,16 @@ class ButtonFeedbackTests(unittest.TestCase):
 
         apply_visual_theme(dropdown)
 
-        self.assertEqual(dropdown.width, float("inf"))
+        self.assertEqual(dropdown.width, 300)
+        self.assertEqual(dropdown.menu_width, 300)
+
+    def test_expanded_dropdown_delegates_both_widths_to_row(self):
+        dropdown = ft.Dropdown(label="Cliente", expand=True)
+
+        apply_visual_theme(dropdown)
+
+        self.assertIsNone(dropdown.width)
         self.assertIsNone(dropdown.menu_width)
-        with patch.object(ft.Dropdown, "update") as update:
-            dropdown.on_size_change(SimpleNamespace(width=346, height=56))
-        self.assertEqual(dropdown.menu_width, 346)
-        update.assert_called_once_with()
 
 
 if __name__ == "__main__":

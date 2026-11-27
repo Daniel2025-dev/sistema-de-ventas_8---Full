@@ -70,12 +70,14 @@ class Ventas:
 
         self.entry_cliente = ft.Dropdown(
             label="Cliente",
+            expand=True,
             border_radius=16,
             filled=True,
             bgcolor=PALETTE["surface_alt"],
         )
         self.entry_nombre = ft.Dropdown(
             label="Producto",
+            expand=True,
             border_radius=16,
             filled=True,
             bgcolor=PALETTE["surface_alt"],
@@ -1383,13 +1385,13 @@ class Ventas:
                 self.scan_status,
                 ft.Row(
                     [
-                        ft.Container(expand=True, content=self.entry_cliente),
+                        self.entry_cliente,
                         ft.IconButton(ft.Icons.PERSON_ADD_ALT_1, on_click=self.abrir_cliente),
                     ]
                 ),
                 ft.Row(
                     [
-                        ft.Container(expand=True, content=self.entry_nombre),
+                        self.entry_nombre,
                         ft.IconButton(ft.Icons.ADD_BOX_OUTLINED, on_click=self.productos_no_registrados),
                     ]
                 ),

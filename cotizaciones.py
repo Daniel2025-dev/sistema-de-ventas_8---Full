@@ -19,7 +19,7 @@ class Cotizaciones:
         self.selected_quote: int | None = None
         self.numero_factura = self.obtener_numero_actual()
 
-        self.entry_cliente = ft.Dropdown(label="Cliente", border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
+        self.entry_cliente = ft.Dropdown(label="Cliente", expand=True, border_radius=16, filled=True, bgcolor=PALETTE["surface_alt"])
         self.entry_nombre = ft.Dropdown(
             label="Producto",
             border_radius=16,
@@ -366,7 +366,7 @@ class Cotizaciones:
         left = ft.Column(
             [
                 page_title("Cotizaciones", "Carrito separado para cotizar sin afectar la caja."),
-                ft.Row([ft.Container(expand=True, content=self.entry_cliente), ft.IconButton(ft.Icons.PERSON_ADD_ALT_1, on_click=self.abrir_cliente)]),
+                ft.Row([self.entry_cliente, ft.IconButton(ft.Icons.PERSON_ADD_ALT_1, on_click=self.abrir_cliente)]),
                 self.entry_nombre,
                 ft.Row(
                     [

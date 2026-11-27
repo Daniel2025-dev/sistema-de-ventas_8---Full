@@ -326,35 +326,17 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
                 label = option.content.value
             option_labels.append(str(label or ""))
 
-        # Stretch to the real constraints supplied by the parent. A Dropdown
-        # with width=None keeps its small intrinsic width even when wrapped by
-        # an expanded Container, wasting most of the row and truncating text.
-        if control.width is None:
-            control.width = float("inf")
-        # An infinite layout width is resolved correctly for the field, but
-        # Dropdown also reuses that value for its overlay and can stretch the
-        # menu across the viewport. Synchronize the overlay with the actual
-        # rendered width reported by the client on every responsive resize.
-        previous_size_handler = control.on_size_change
-        if not getattr(previous_size_handler, "_pos_dropdown_width_sync", False):
-            def sync_dropdown_menu_width(event: ft.LayoutSizeChangeEvent) -> None:
-                rendered_width = max(1.0, float(event.width))
-                if control.menu_width != rendered_width:
-                    control.menu_width = rendered_width
-                    # Size events do not automatically send modified control
-                    # properties back to the browser. Push the measured width
-                    # before the user opens the overlay.
-                    try:
-                        control.update()
-                    except RuntimeError:
-                        # Unit tests and controls not mounted on a Page yet.
-                        pass
-                if previous_size_handler is not None:
-                    previous_size_handler(event)
-
-            sync_dropdown_menu_width._pos_dropdown_width_sync = True  # type: ignore[attr-defined]
-            control.on_size_change = sync_dropdown_menu_width
-        control.size_change_interval = 100
+        # Never use an infinite width here: Flet propagates it to the popup
+        # overlay and the options then span the complete viewport. Dropdowns
+        # that are direct flex children let Row calculate their real width;
+        # regular form dropdowns use a finite field/menu pair.
+        if control.expand:
+            control.width = None
+            control.menu_width = None
+        else:
+            if control.width is None:
+                control.width = 300
+            control.menu_width = control.width
         control.menu_height = min(320, max(112, len(option_labels) * 48 + 16))
         control.expanded_insets = 0
         control.fill_color = PALETTE["surface_soft"]
