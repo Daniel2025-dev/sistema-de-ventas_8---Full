@@ -326,11 +326,12 @@ def _apply_input_style(control: ft.TextField | ft.Dropdown) -> None:
                 label = option.content.value
             option_labels.append(str(label or ""))
 
-        # Keep the popup proportional to its contents instead of letting an
-        # infinite-width form control expand the overlay across the screen.
-        # Leave the field width fluid so Rows, Columns and responsive
-        # containers can use all available space. With menu_width unset Flet
-        # aligns the popup to the field instead of creating a narrow menu.
+        # Stretch to the real constraints supplied by the parent. A Dropdown
+        # with width=None keeps its small intrinsic width even when wrapped by
+        # an expanded Container, wasting most of the row and truncating text.
+        if control.width is None:
+            control.width = float("inf")
+        # With menu_width unset Flet aligns the popup to the rendered field.
         control.menu_width = None
         control.menu_height = min(320, max(112, len(option_labels) * 48 + 16))
         control.expanded_insets = 0

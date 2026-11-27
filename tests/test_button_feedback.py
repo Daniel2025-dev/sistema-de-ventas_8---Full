@@ -51,7 +51,7 @@ class ButtonFeedbackTests(unittest.TestCase):
 
         apply_visual_theme(dropdown)
 
-        self.assertIsNone(dropdown.width)
+        self.assertEqual(dropdown.width, float("inf"))
         self.assertIsNone(dropdown.menu_width)
 
 
